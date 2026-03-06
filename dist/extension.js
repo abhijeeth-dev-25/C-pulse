@@ -1,1 +1,1049 @@
-(()=>{"use strict";var e={415(e,t,n){var i,s=this&&this.__createBinding||(Object.create?function(e,t,n,i){void 0===i&&(i=n);var s=Object.getOwnPropertyDescriptor(t,n);s&&!("get"in s?!t.__esModule:s.writable||s.configurable)||(s={enumerable:!0,get:function(){return t[n]}}),Object.defineProperty(e,i,s)}:function(e,t,n,i){void 0===i&&(i=n),e[i]=t[n]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),a=this&&this.__importStar||(i=function(e){return i=Object.getOwnPropertyNames||function(e){var t=[];for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[t.length]=n);return t},i(e)},function(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n=i(e),a=0;a<n.length;a++)"default"!==n[a]&&s(t,e,n[a]);return r(t,e),t});Object.defineProperty(t,"__esModule",{value:!0}),t.CInstrumenter=void 0;const o=a(n(896)),c=a(n(928)),l=a(n(857));t.CInstrumenter=class{instrument(e,t){const n=o.readFileSync(e,"utf-8"),i=this.injectCalls(n),s=`${this.buildPreamble(t)}\n/* ── User code: ${c.basename(e)} ── */\n${i}`,r=c.join(l.tmpdir(),".cpulse_instrumented.c");return o.writeFileSync(r,s,"utf-8"),r}injectCalls(e){const t=e.split("\n"),n=[],i=["if","while","for","return","else","sizeof","NULL","0"];for(let e=0;e<t.length;e++){const s=t[e],r=s.trim(),a=s.match(/^(\s*)/)?.[1]??"",o=e+1;if(n.push(s),!r||r.startsWith("//")||r.startsWith("#")||r.startsWith("*")||r.startsWith("/*"))continue;const c=r.match(/^free\s*\(\s*(\w+)\s*\)\s*;$/);if(c){const e=c[1];n.push(`${a}cpulse_heap_free((void*)(${e}), "${e}", ${o});`);continue}const l=r.match(/(\w+)\s*=\s*(?:\([^)]*\)\s*)?malloc\s*\(/);if(l){const e=l[1];if(!i.includes(e)){n.push(`${a}if (${e}) cpulse_heap_create((void*)(${e}), "${e}", ${o});`);continue}}const u=r.match(/^(\w+)\s*->\s*((?!next\b|left\b|right\b|prev\b)\w+)\s*=\s*([^;]+);$/);if(u){const[,e,t,s]=u;if(!i.includes(e)){n.push(`${a}cpulse_field_str((void*)(${e}), "${e}", "${t}", (long long)(${s}), ${o});`);continue}}const p=r.match(/^(\w+)\s*->\s*(next|left|right|prev)\s*=\s*(\w+)\s*->\s*(next|left|right|prev)\s*;$/);if(p){const[,e,t]=p;n.push(`${a}cpulse_ptr_link((void*)(${e}), "${e}", "${t}", (void*)(${e}->${t}), "${e}->${t}", ${o});`);continue}const d=r.match(/^(\w+)\s*->\s*(next|left|right|prev)\s*=\s*(\w+)\s*;$/);if(d){const[,e,t,i]=d;"NULL"===i?n.push(`${a}cpulse_ptr_link((void*)(${e}), "${e}", "${t}", NULL, "NULL", ${o});`):n.push(`${a}cpulse_ptr_link((void*)(${e}), "${e}", "${t}", (void*)(${i}), "${i}", ${o});`);continue}const _=r.match(/^(\w+)\s*=\s*(\w+)(?:->(?:next|left|right|prev))?\s*;$/);if(_){const[,e,t]=_,s=/^\d+$/.test(t),r=["if","while","for","return","else","sizeof"].includes(t);s||r||i.includes(e)||n.push(`${a}cpulse_assignment("${e}", (void*)(${e}), ${o});`);continue}}return n.join("\n")}buildPreamble(e){return`/* === C-Pulse Live Preamble === */\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/socket.h>\n#include <arpa/inet.h>\n#include <unistd.h>\n\n#define CPULSE_MAX 1024\ntypedef struct { void* ptr; int id; } CpEntry;\nstatic CpEntry __cp_reg[CPULSE_MAX];\nstatic int     __cp_count   = 0;\nstatic int     __cp_next_id = 1;\nstatic int     __cp_ts      = 0;\nstatic int     __cp_sock    = -1;\n\nstatic int __cp_get(void* p) {\n    for (int i = 0; i < __cp_count; i++)\n        if (__cp_reg[i].ptr == p) return __cp_reg[i].id;\n    return 0;\n}\nstatic int __cp_reg_ptr(void* p) {\n    if (!p) return 0;\n    int x = __cp_get(p); if (x) return x;\n    int id = __cp_next_id++;\n    if (__cp_count < CPULSE_MAX) { __cp_reg[__cp_count].ptr = p; __cp_reg[__cp_count].id = id; __cp_count++; }\n    return id;\n}\nstatic void __cp_remove(void* p) {\n    for (int i = 0; i < __cp_count; i++) {\n        if (__cp_reg[i].ptr == p) { __cp_reg[i] = __cp_reg[--__cp_count]; return; }\n    }\n}\nstatic void __cp_send(const char* j) {\n    if (__cp_sock < 0) return;\n    char buf[2048]; int n = snprintf(buf, sizeof(buf), "%s\\n", j);\n    send(__cp_sock, buf, (size_t)n, MSG_NOSIGNAL);\n}\n\nstatic void __attribute__((constructor)) cpulse_init() {\n    struct sockaddr_in s; memset(&s,0,sizeof(s));\n    s.sin_family = AF_INET; s.sin_port = htons(${e});\n    inet_pton(AF_INET, "127.0.0.1", &s.sin_addr);\n    for (int i = 0; i < 10; i++) {\n        __cp_sock = socket(AF_INET, SOCK_STREAM, 0);\n        if (__cp_sock >= 0 && connect(__cp_sock, (struct sockaddr*)&s, sizeof(s)) == 0) return;\n        if (__cp_sock >= 0) { close(__cp_sock); __cp_sock = -1; }\n        usleep(150000);\n    }\n    fprintf(stderr, "[C-Pulse] Could not connect on port ${e}\\n");\n}\nstatic void __attribute__((destructor)) cpulse_exit() {\n    if (__cp_sock >= 0) { shutdown(__cp_sock, SHUT_RDWR); close(__cp_sock); __cp_sock = -1; }\n}\n\nvoid cpulse_heap_create(void* ptr, const char* var, int line) {\n    int id = __cp_reg_ptr(ptr);\n    char j[512];\n    snprintf(j, sizeof(j),\n        "{\\"type\\":\\"heap_create\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"addr\\":%lu,\\"lineNumber\\":%d}",\n        __cp_ts++, id, var, (unsigned long)ptr, line);\n    __cp_send(j);\n}\nvoid cpulse_heap_free(void* ptr, const char* var, int line) {\n    int id = __cp_get(ptr);\n    if (!id) return;\n    char j[256];\n    snprintf(j, sizeof(j),\n        "{\\"type\\":\\"heap_free\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"lineNumber\\":%d}",\n        __cp_ts++, id, var, line);\n    __cp_send(j);\n    __cp_remove(ptr);\n}\nvoid cpulse_field_str(void* ptr, const char* var, const char* field, long long val, int line) {\n    int id = __cp_get(ptr); if (!id) return;\n    char j[512];\n    snprintf(j, sizeof(j),\n        "{\\"type\\":\\"heap_update\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"property\\":\\"%s\\",\\"value\\":%lld,\\"lineNumber\\":%d}",\n        __cp_ts++, id, var, field, val, line);\n    __cp_send(j);\n}\nvoid cpulse_ptr_link(void* src, const char* sv, const char* field, void* dst, const char* dv, int line) {\n    int si = __cp_get(src); if (!si) return;\n    int di = dst ? __cp_reg_ptr(dst) : 0;\n    char j[512];\n    snprintf(j, sizeof(j),\n        "{\\"type\\":\\"ptr_link\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"property\\":\\"%s\\",\\"value\\":%d,\\"targetVar\\":\\"%s\\",\\"lineNumber\\":%d}",\n        __cp_ts++, si, sv, field, di, dv, line);\n    __cp_send(j);\n}\nvoid cpulse_assignment(const char* var, void* ptr, int line) {\n    int id = __cp_get(ptr);\n    char j[256];\n    snprintf(j, sizeof(j),\n        "{\\"type\\":\\"assignment\\",\\"timestamp\\":%d,\\"variableName\\":\\"%s\\",\\"heapId\\":%d,\\"addr\\":%lu,\\"lineNumber\\":%d}",\n        __cp_ts++, var, id, (unsigned long)ptr, line);\n    __cp_send(j);\n}\n\nvoid cpulse_heap_create(void*, const char*, int);\nvoid cpulse_heap_free(void*, const char*, int);\nvoid cpulse_field_str(void*, const char*, const char*, long long, int);\nvoid cpulse_ptr_link(void*, const char*, const char*, void*, const char*, int);\nvoid cpulse_assignment(const char*, void*, int);\n/* === End Preamble === */\n`}}},313(e,t,n){var i,s=this&&this.__createBinding||(Object.create?function(e,t,n,i){void 0===i&&(i=n);var s=Object.getOwnPropertyDescriptor(t,n);s&&!("get"in s?!t.__esModule:s.writable||s.configurable)||(s={enumerable:!0,get:function(){return t[n]}}),Object.defineProperty(e,i,s)}:function(e,t,n,i){void 0===i&&(i=n),e[i]=t[n]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),a=this&&this.__importStar||(i=function(e){return i=Object.getOwnPropertyNames||function(e){var t=[];for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[t.length]=n);return t},i(e)},function(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n=i(e),a=0;a<n.length;a++)"default"!==n[a]&&s(t,e,n[a]);return r(t,e),t});Object.defineProperty(t,"__esModule",{value:!0}),t.CLiveRunner=void 0;const o=a(n(398)),c=a(n(896)),l=a(n(928)),u=n(415);t.CLiveRunner=class{port;terminal=null;instrumenter=new u.CInstrumenter;tmpC=null;tmpBin=null;constructor(e){this.port=e}start(e){const t=this.instrumenter.instrument(e,this.port),n=t.replace(".c","");this.tmpC=t,this.tmpBin=n;const i=l.dirname(e);this.terminal&&this.terminal.dispose(),this.terminal=o.window.createTerminal({name:"C-Pulse Live",cwd:i}),this.terminal.show(!0),this.terminal.sendText(`gcc -g "${t}" -o "${n}" && echo "✅ Compiled OK — Starting..." && "${n}"`)}stop(){if(this.terminal?.sendText("exit"),this.terminal?.dispose(),this.terminal=null,this.tmpC&&c.existsSync(this.tmpC))try{c.unlinkSync(this.tmpC)}catch{}if(this.tmpBin&&c.existsSync(this.tmpBin))try{c.unlinkSync(this.tmpBin)}catch{}this.tmpC=null,this.tmpBin=null}}},752(e,t,n){var i,s=this&&this.__createBinding||(Object.create?function(e,t,n,i){void 0===i&&(i=n);var s=Object.getOwnPropertyDescriptor(t,n);s&&!("get"in s?!t.__esModule:s.writable||s.configurable)||(s={enumerable:!0,get:function(){return t[n]}}),Object.defineProperty(e,i,s)}:function(e,t,n,i){void 0===i&&(i=n),e[i]=t[n]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),a=this&&this.__importStar||(i=function(e){return i=Object.getOwnPropertyNames||function(e){var t=[];for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[t.length]=n);return t},i(e)},function(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n=i(e),a=0;a<n.length;a++)"default"!==n[a]&&s(t,e,n[a]);return r(t,e),t});Object.defineProperty(t,"__esModule",{value:!0}),t.CLiveServer=void 0;const o=a(n(278));t.CLiveServer=class{onEvent;server=null;activeSocket=null;port=0;buffer="";constructor(e){this.onEvent=e}start(){return new Promise((e,t)=>{this.server=o.createServer(e=>{this.activeSocket=e,e.on("data",e=>{this.buffer+=e.toString(),this.processBuffer()}),e.on("end",()=>{this.processBuffer(),this.onEvent({type:"execution_end",timestamp:Date.now()}),this.activeSocket=null}),e.on("error",e=>{console.error("[C-Pulse] Socket error:",e.message),this.activeSocket=null})}),this.server.on("error",t),this.server.listen(0,"127.0.0.1",()=>{const t=this.server.address();this.port=t.port,console.log(`[C-Pulse] LiveServer on 127.0.0.1:${this.port}`),e(this.port)})})}processBuffer(){const e=this.buffer.split("\n");this.buffer=e.pop()||"";for(const t of e){const e=t.trim();if(e)try{const t=JSON.parse(e);this.onEvent(t)}catch{}}}getPort(){return this.port}stop(){this.activeSocket?.destroy(),this.activeSocket=null,this.server?.close(),this.server=null,this.buffer="",this.port=0}}},844(e,t,n){var i,s=this&&this.__createBinding||(Object.create?function(e,t,n,i){void 0===i&&(i=n);var s=Object.getOwnPropertyDescriptor(t,n);s&&!("get"in s?!t.__esModule:s.writable||s.configurable)||(s={enumerable:!0,get:function(){return t[n]}}),Object.defineProperty(e,i,s)}:function(e,t,n,i){void 0===i&&(i=n),e[i]=t[n]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),a=this&&this.__importStar||(i=function(e){return i=Object.getOwnPropertyNames||function(e){var t=[];for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[t.length]=n);return t},i(e)},function(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n=i(e),a=0;a<n.length;a++)"default"!==n[a]&&s(t,e,n[a]);return r(t,e),t});Object.defineProperty(t,"__esModule",{value:!0}),t.CPulsePanel=void 0;const o=n(398),c=n(727),l=a(n(928));class u{static currentPanel;static viewType="cPulse";_panel;_extensionUri;_disposables=[];_messageHandler;static render(e){if(u.currentPanel)u.currentPanel._panel.reveal(o.ViewColumn.Beside);else{const t=o.window.createWebviewPanel(u.viewType,"C-Pulse Visualizer",o.ViewColumn.Beside,{enableScripts:!0,localResourceRoots:[o.Uri.joinPath(e,"out")],retainContextWhenHidden:!0});u.currentPanel=new u(t,e)}}retrace(e){this._messageHandler.handleMessage({command:"load_file_path",filePath:e})}constructor(e,t){this._panel=e,this._extensionUri=t,this._panel.onDidDispose(()=>this.dispose(),null,this._disposables),this._panel.webview.html=this._getWebviewContent(this._panel.webview),this._messageHandler=new c.MessageHandler(this._panel.webview),this._setWebviewMessageListener(this._panel.webview),this._watchWebviewBuild(t)}_watchWebviewBuild(e){o.Uri.joinPath(e,"out","webview","assets","index.js").fsPath;const t=o.workspace.createFileSystemWatcher(`**${l.sep}out${l.sep}webview${l.sep}assets${l.sep}*.js`),n=()=>{u.currentPanel&&(console.log("[C-Pulse] Webview bundle changed — reloading..."),u.currentPanel._panel.webview.html=u.currentPanel._getWebviewContent(u.currentPanel._panel.webview))};t.onDidChange(n,null,this._disposables),t.onDidCreate(n,null,this._disposables),this._disposables.push(t)}dispose(){for(u.currentPanel=void 0,this._panel.dispose(),this._messageHandler.dispose();this._disposables.length;){const e=this._disposables.pop();e&&e.dispose()}}_getWebviewContent(e){const t=e.asWebviewUri(o.Uri.joinPath(this._extensionUri,"out","webview","assets","index.css")),n=e.asWebviewUri(o.Uri.joinPath(this._extensionUri,"out","webview","assets","index.js")),i=function(){let e="";const t="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";for(let n=0;n<32;n++)e+=t.charAt(Math.floor(62*Math.random()));return e}();return`\n      <!DOCTYPE html>\n      <html lang="en">\n        <head>\n          <meta charset="utf-8">\n          <meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no">\n          <meta name="theme-color" content="#000000">\n          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${e.cspSource} 'unsafe-inline'; img-src ${e.cspSource} data:; script-src 'nonce-${i}';">\n          <link rel="stylesheet" type="text/css" href="${t}">\n          <title>C-Pulse</title>\n        </head>\n        <body>\n          <noscript>You need to enable JavaScript to run this app.</noscript>\n          <div id="root"></div>\n          <script nonce="${i}" src="${n}"><\/script>\n        </body>\n      </html>\n    `}_setWebviewMessageListener(e){this._disposables.push({dispose:()=>this._messageHandler.dispose()}),e.onDidReceiveMessage(e=>{this._messageHandler.handleMessage(e)},void 0,this._disposables)}}t.CPulsePanel=u},727(e,t,n){var i,s=this&&this.__createBinding||(Object.create?function(e,t,n,i){void 0===i&&(i=n);var s=Object.getOwnPropertyDescriptor(t,n);s&&!("get"in s?!t.__esModule:s.writable||s.configurable)||(s={enumerable:!0,get:function(){return t[n]}}),Object.defineProperty(e,i,s)}:function(e,t,n,i){void 0===i&&(i=n),e[i]=t[n]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),a=this&&this.__importStar||(i=function(e){return i=Object.getOwnPropertyNames||function(e){var t=[];for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[t.length]=n);return t},i(e)},function(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n=i(e),a=0;a<n.length;a++)"default"!==n[a]&&s(t,e,n[a]);return r(t,e),t});Object.defineProperty(t,"__esModule",{value:!0}),t.MessageHandler=void 0;const o=a(n(398)),c=a(n(928)),l=n(752),u=n(313);t.MessageHandler=class{webview;liveServer=null;liveRunner=null;heapNodes=new Map;stackVars=new Map;stepCount=0;currentLine=0;constructor(e){this.webview=e}async handleMessage(e){switch(e.command||e.type){case"ready":await this.startLiveTrace();break;case"load_file":{const e=await o.window.showOpenDialog({canSelectMany:!1,filters:{"C Files":["c"]},title:"Select a C file to visualize"});e?.[0]&&await this.startLiveTrace(e[0].fsPath);break}case"load_file_path":e.filePath&&await this.startLiveTrace(e.filePath);break;case"stop":this.stop()}}async startLiveTrace(e){this.stop();let t=e;if(!t){const e=o.window.activeTextEditor;if("c"===e?.document.languageId)t=e.document.uri.fsPath;else{const e=await o.workspace.findFiles("**/*.c","**/node_modules/**",1);e.length>0&&(t=e[0].fsPath)}}if(!t)return void this.webview.postMessage({type:"error",message:"No C file found. Open a .c file and try again."});this.heapNodes.clear(),this.stackVars.clear(),this.stepCount=0,this.currentLine=0,this.webview.postMessage({type:"live_start",fileName:c.basename(t),code:n(896).readFileSync(t,"utf8")}),this.liveServer=new l.CLiveServer(e=>this.onEvent(e));const i=await this.liveServer.start();this.liveRunner=new u.CLiveRunner(i),this.liveRunner.start(t)}onEvent(e){this.stepCount++,this.currentLine=e.lineNumber??this.currentLine;let t=[];if("heap_create"===e.type&&void 0!==e.heapId&&this.heapNodes.set(e.heapId,{id:`node_${e.heapId}`,heapId:e.heapId,varName:e.varName||"",addr:e.addr||0,fields:[{key:"data",value:"?"},{key:"next",value:"NULL"}],next:null,left:null,right:null}),"heap_update"===e.type&&void 0!==e.heapId){const n=this.heapNodes.get(e.heapId);if(n){const t=e.property||"",i=n.fields.find(e=>e.key===t),s=String(e.value??"");i?i.value=s:n.fields.push({key:t,value:s})}else if(!e.heapId||0===e.heapId){t.push("⚠ NULL DEREFERENCE: Attempted to dereference a NULL pointer");const n=e.varName||e.variableName;if(n&&this.stackVars.has(n)){const e=this.stackVars.get(n);this.stackVars.set(n,{...e,isDereferencingNull:!0})}}}if("ptr_link"===e.type){const n=e.heapId,i=e.value,s=e.property||"next",r=this.heapNodes.get(n);if(r){r[s]=0!==i?`node_${i}`:null;const e=r.fields.find(e=>e.key===s);e?e.value=0!==i?"[Ref]":"NULL":r.fields.push({key:s,value:0!==i?"[Ref]":"NULL"})}else if(!n||0===n){t.push("⚠ NULL DEREFERENCE: Attempted to dereference a NULL pointer");const n=e.varName||e.variableName;if(n&&this.stackVars.has(n)){const e=this.stackVars.get(n);this.stackVars.set(n,{...e,isDereferencingNull:!0})}}}if("heap_free"===e.type&&void 0!==e.heapId){const n=this.heapNodes.get(e.heapId);n?n.isFreed?(n.isDoubleFree=!0,t.push(`Double free detected on address 0x${(64*e.heapId+21920).toString(16).toUpperCase()}`)):n.isFreed=!0:t.push("⚠ INVALID FREE: Attempted to free memory that was never allocated")}if("assignment"===e.type){const t=void 0===e.heapId||0===e.heapId;this.stackVars.set(e.variableName,{name:e.variableName,value:t?"NULL":`0x${(64*(e.heapId??0)+21760).toString(16).toUpperCase()}`,pointsTo:t?null:`node_${e.heapId}`,isPointer:!0})}let i=!1,s=this.describeEvent(e);if("execution_end"===e.type){let e=0;for(const[,t]of this.heapNodes)t.isFreed||(t.isLeaked=!0,e++);i=e>0,s=i?`Program terminated. ⚠ WARNING: ${e} memory leak(s) detected!`:"Program terminated successfully. No memory leaks."}const r={type:"live_event",step:this.stepCount,line:this.currentLine,description:s,heap:Array.from(this.heapNodes.values()),stack:Array.from(this.stackVars.values()),hasLeak:i,warnings:t};n(896).appendFileSync("/tmp/cpulse_log.json",JSON.stringify(r)+"\n"),this.webview.postMessage(r)}describeEvent(e){return"heap_create"===e.type?`malloc() — created node (${e.varName}) @ 0x${(e.addr||0).toString(16).toUpperCase()}`:"heap_update"===e.type?`${e.varName}->${e.property} = ${e.value} (line ${e.lineNumber})`:"ptr_link"===e.type?`${e.varName}->${e.property} → node_${e.value} (line ${e.lineNumber})`:"assignment"===e.type?`${e.variableName} = node_${e.heapId} (line ${e.lineNumber})`:JSON.stringify(e)}stop(){this.liveRunner?.stop(),this.liveServer?.stop(),this.liveRunner=null,this.liveServer=null}dispose(){this.stop()}}},265(e,t,n){var i,s=this&&this.__createBinding||(Object.create?function(e,t,n,i){void 0===i&&(i=n);var s=Object.getOwnPropertyDescriptor(t,n);s&&!("get"in s?!t.__esModule:s.writable||s.configurable)||(s={enumerable:!0,get:function(){return t[n]}}),Object.defineProperty(e,i,s)}:function(e,t,n,i){void 0===i&&(i=n),e[i]=t[n]}),r=this&&this.__setModuleDefault||(Object.create?function(e,t){Object.defineProperty(e,"default",{enumerable:!0,value:t})}:function(e,t){e.default=t}),a=this&&this.__importStar||(i=function(e){return i=Object.getOwnPropertyNames||function(e){var t=[];for(var n in e)Object.prototype.hasOwnProperty.call(e,n)&&(t[t.length]=n);return t},i(e)},function(e){if(e&&e.__esModule)return e;var t={};if(null!=e)for(var n=i(e),a=0;a<n.length;a++)"default"!==n[a]&&s(t,e,n[a]);return r(t,e),t});Object.defineProperty(t,"__esModule",{value:!0}),t.activate=function(e){console.log("[C-Pulse] Extension activated!");const t=o.commands.registerCommand("c-pulse.start",()=>{c.CPulsePanel.render(e.extensionUri)});e.subscriptions.push(t);const n=o.window.createStatusBarItem(o.StatusBarAlignment.Right,100);function i(e){e&&"c"===e.document.languageId?n.show():n.hide()}n.command="c-pulse.start",n.text="$(play-circle) C-Pulse",n.tooltip="Launch C-Pulse Visualizer",n.backgroundColor=new o.ThemeColor("statusBarItem.warningBackground"),e.subscriptions.push(n),e.subscriptions.push(o.window.onDidChangeActiveTextEditor(i)),i(o.window.activeTextEditor),e.subscriptions.push(o.workspace.onDidSaveTextDocument(e=>{"c"===e.languageId&&c.CPulsePanel.currentPanel&&c.CPulsePanel.currentPanel.retrace(e.uri.fsPath)}))},t.deactivate=function(){};const o=a(n(398)),c=n(844)},398(e){e.exports=require("vscode")},896(e){e.exports=require("fs")},278(e){e.exports=require("net")},857(e){e.exports=require("os")},928(e){e.exports=require("path")}},t={},n=function n(i){var s=t[i];if(void 0!==s)return s.exports;var r=t[i]={exports:{}};return e[i].call(r.exports,r,r.exports,n),r.exports}(265);module.exports=n})();
+/******/ (() => { // webpackBootstrap
+/******/ 	"use strict";
+/******/ 	var __webpack_modules__ = ([
+/* 0 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.activate = activate;
+exports.deactivate = deactivate;
+const vscode = __importStar(__webpack_require__(1));
+const CPulsePanel_1 = __webpack_require__(2);
+function activate(context) {
+    console.log('[C-Pulse] Extension activated!');
+    // ── 1. Register command ──────────────────────────────────────────────────
+    const disposable = vscode.commands.registerCommand('c-pulse.start', () => {
+        CPulsePanel_1.CPulsePanel.render(context.extensionUri);
+    });
+    context.subscriptions.push(disposable);
+    // ── 2. Status Bar Button (shows on any C file) ───────────────────────────
+    const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBarItem.command = 'c-pulse.start';
+    statusBarItem.text = '$(play-circle) C-Pulse';
+    statusBarItem.tooltip = 'Launch C-Pulse Visualizer';
+    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    context.subscriptions.push(statusBarItem);
+    // Show/hide the button based on the active editor language
+    function updateStatusBar(editor) {
+        if (editor && editor.document.languageId === 'c') {
+            statusBarItem.show();
+        }
+        else {
+            statusBarItem.hide();
+        }
+    }
+    // Trigger on editor switch
+    context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(updateStatusBar));
+    // Check immediately on activation
+    updateStatusBar(vscode.window.activeTextEditor);
+    // ── 3. Auto-retrace on C file save ──────────────────────────────────────
+    context.subscriptions.push(vscode.workspace.onDidSaveTextDocument((doc) => {
+        // Only trigger if it's a C file AND the visualizer is already open
+        if (doc.languageId === 'c' && CPulsePanel_1.CPulsePanel.currentPanel) {
+            // Post a 'reload' command to the existing panel's message handler
+            CPulsePanel_1.CPulsePanel.currentPanel.retrace(doc.uri.fsPath);
+        }
+    }));
+}
+function deactivate() { }
+
+
+/***/ }),
+/* 1 */
+/***/ ((module) => {
+
+module.exports = require("vscode");
+
+/***/ }),
+/* 2 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CPulsePanel = void 0;
+const vscode_1 = __webpack_require__(1);
+const MessageHandler_1 = __webpack_require__(3);
+const path = __importStar(__webpack_require__(4));
+/**
+ * This class manages the state and behavior of C-Pulse webview panels.
+ */
+class CPulsePanel {
+    static currentPanel;
+    static viewType = "cPulse";
+    _panel;
+    _extensionUri;
+    _disposables = [];
+    _messageHandler;
+    static render(extensionUri) {
+        if (CPulsePanel.currentPanel) {
+            // If the webview panel already exists reveal it
+            CPulsePanel.currentPanel._panel.reveal(vscode_1.ViewColumn.Beside);
+        }
+        else {
+            // If a webview panel does not already exist create and show a new one
+            const panel = vscode_1.window.createWebviewPanel(CPulsePanel.viewType, "C-Pulse Visualizer", vscode_1.ViewColumn.Beside, {
+                enableScripts: true,
+                localResourceRoots: [vscode_1.Uri.joinPath(extensionUri, "out")],
+                retainContextWhenHidden: true,
+            });
+            CPulsePanel.currentPanel = new CPulsePanel(panel, extensionUri);
+        }
+    }
+    /**
+     * Triggers a live re-trace on the given file path, forwarding it to the MessageHandler.
+     */
+    retrace(filePath) {
+        this._messageHandler.handleMessage({ command: 'load_file_path', filePath });
+    }
+    constructor(panel, extensionUri) {
+        this._panel = panel;
+        this._extensionUri = extensionUri;
+        // Set an event listener to listen for when the panel is disposed
+        this._panel.onDidDispose(() => this.dispose(), null, this._disposables);
+        // Set the HTML content for the webview panel
+        this._panel.webview.html = this._getWebviewContent(this._panel.webview);
+        // Set an event listener to listen for messages passed from the webview context
+        this._messageHandler = new MessageHandler_1.MessageHandler(this._panel.webview);
+        this._setWebviewMessageListener(this._panel.webview);
+        // ── Watch for webview build output changes (live UI reload) ──────────
+        this._watchWebviewBuild(extensionUri);
+    }
+    /**
+     * Watches the compiled webview bundle and refreshes the HTML whenever it's rebuilt.
+     * This enables live reloading of the React UI without restarting the extension.
+     */
+    _watchWebviewBuild(extensionUri) {
+        const jsOutPath = vscode_1.Uri.joinPath(extensionUri, "out", "webview", "assets", "index.js").fsPath;
+        // Use VS Code's built-in file watcher
+        const watcher = vscode_1.workspace.createFileSystemWatcher(`**${path.sep}out${path.sep}webview${path.sep}assets${path.sep}*.js`);
+        const reload = () => {
+            if (CPulsePanel.currentPanel) {
+                console.log('[C-Pulse] Webview bundle changed — reloading...');
+                CPulsePanel.currentPanel._panel.webview.html =
+                    CPulsePanel.currentPanel._getWebviewContent(CPulsePanel.currentPanel._panel.webview);
+            }
+        };
+        watcher.onDidChange(reload, null, this._disposables);
+        watcher.onDidCreate(reload, null, this._disposables);
+        this._disposables.push(watcher);
+        // Keep reference just for logging
+        void jsOutPath;
+    }
+    dispose() {
+        CPulsePanel.currentPanel = undefined;
+        this._panel.dispose();
+        this._messageHandler.dispose();
+        while (this._disposables.length) {
+            const disposable = this._disposables.pop();
+            if (disposable) {
+                disposable.dispose();
+            }
+        }
+    }
+    _getWebviewContent(webview) {
+        // The CSS file from the React build output
+        const stylesUri = webview.asWebviewUri(vscode_1.Uri.joinPath(this._extensionUri, "out", "webview", "assets", "index.css"));
+        // The JS file from the React build output
+        const scriptUri = webview.asWebviewUri(vscode_1.Uri.joinPath(this._extensionUri, "out", "webview", "assets", "index.js"));
+        const nonce = getNonce();
+        // Tip: Install the es6-string-html VS Code extension to enable code highlighting below
+        return /*html*/ `
+      <!DOCTYPE html>
+      <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=no">
+          <meta name="theme-color" content="#000000">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data:; script-src 'nonce-${nonce}';">
+          <link rel="stylesheet" type="text/css" href="${stylesUri}">
+          <title>C-Pulse</title>
+        </head>
+        <body>
+          <noscript>You need to enable JavaScript to run this app.</noscript>
+          <div id="root"></div>
+          <script nonce="${nonce}" src="${scriptUri}"></script>
+        </body>
+      </html>
+    `;
+    }
+    /**
+     * Sets up an event listener to listen for messages passed from the webview context.
+     *
+     * @param webview A reference to the extension webview
+     */
+    _setWebviewMessageListener(webview) {
+        // Ensure gdb engine stops when panel closes
+        this._disposables.push({ dispose: () => this._messageHandler.dispose() });
+        webview.onDidReceiveMessage((message) => {
+            this._messageHandler.handleMessage(message);
+        }, undefined, this._disposables);
+    }
+}
+exports.CPulsePanel = CPulsePanel;
+function getNonce() {
+    let text = "";
+    const possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    for (let i = 0; i < 32; i++) {
+        text += possible.charAt(Math.floor(Math.random() * possible.length));
+    }
+    return text;
+}
+
+
+/***/ }),
+/* 3 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.MessageHandler = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const path = __importStar(__webpack_require__(4));
+const CLiveServer_1 = __webpack_require__(5);
+const CLiveRunner_1 = __webpack_require__(7);
+/**
+ * MessageHandler
+ *
+ * Orchestrates the full C-Pulse live pipeline — identical in structure to
+ * the JS-Pulse extension.ts handlers:
+ *   1. CLiveServer starts a TCP server (gets port)
+ *   2. CLiveRunner instruments the .c file, compiles it, runs it in terminal
+ *   3. C program connects back and streams JSON events
+ *   4. Each event is forwarded to the React webview via postMessage()
+ *   5. Webview renders live graph updates on each received event
+ */
+class MessageHandler {
+    webview;
+    liveServer = null;
+    liveRunner = null;
+    // In-memory graph state (rebuilt from events)
+    heapNodes = new Map();
+    stackVars = new Map();
+    stepCount = 0;
+    currentLine = 0;
+    constructor(webview) {
+        this.webview = webview;
+    }
+    async handleMessage(message) {
+        switch (message.command || message.type) {
+            case 'ready': {
+                await this.startLiveTrace();
+                break;
+            }
+            case 'load_file': {
+                const uris = await vscode.window.showOpenDialog({
+                    canSelectMany: false,
+                    filters: { 'C Files': ['c'] },
+                    title: 'Select a C file to visualize',
+                });
+                if (uris?.[0]) {
+                    await this.startLiveTrace(uris[0].fsPath);
+                }
+                break;
+            }
+            case 'load_file_path': {
+                // Direct path retrace — triggered by auto-save in extension.ts
+                if (message.filePath) {
+                    await this.startLiveTrace(message.filePath);
+                }
+                break;
+            }
+            case 'stop': {
+                this.stop();
+                break;
+            }
+        }
+    }
+    async startLiveTrace(filePath) {
+        // Stop previous session
+        this.stop();
+        // Resolve file path
+        let targetPath = filePath;
+        if (!targetPath) {
+            const editor = vscode.window.activeTextEditor;
+            if (editor?.document.languageId === 'c') {
+                targetPath = editor.document.uri.fsPath;
+            }
+            else {
+                const found = await vscode.workspace.findFiles('**/*.c', '**/node_modules/**', 1);
+                if (found.length > 0)
+                    targetPath = found[0].fsPath;
+            }
+        }
+        if (!targetPath) {
+            this.webview.postMessage({ type: 'error', message: 'No C file found. Open a .c file and try again.' });
+            return;
+        }
+        // Reset state
+        this.heapNodes.clear();
+        this.stackVars.clear();
+        this.stepCount = 0;
+        this.currentLine = 0;
+        // Send initial "loading" state to webview
+        this.webview.postMessage({
+            type: 'live_start',
+            fileName: path.basename(targetPath),
+            code: (__webpack_require__(8).readFileSync)(targetPath, 'utf8')
+        });
+        // 1. Start TCP server
+        this.liveServer = new CLiveServer_1.CLiveServer((event) => this.onEvent(event));
+        const port = await this.liveServer.start();
+        // 2. Compile + spawn the instrumented C program in VS Code terminal
+        this.liveRunner = new CLiveRunner_1.CLiveRunner(port);
+        this.liveRunner.start(targetPath);
+    }
+    /**
+     * Called for every JSON event streamed from the running C program.
+     * Updates in-memory graph state and posts the full state to the webview.
+     */
+    onEvent(event) {
+        this.stepCount++;
+        this.currentLine = event.lineNumber ?? this.currentLine;
+        let warnings = [];
+        if (event.type === 'heap_create' && event.heapId !== undefined) {
+            this.heapNodes.set(event.heapId, {
+                id: `node_${event.heapId}`,
+                heapId: event.heapId,
+                varName: event.varName || '',
+                addr: event.addr || 0,
+                fields: [{ key: 'data', value: '?' }, { key: 'next', value: 'NULL' }],
+                next: null,
+                left: null,
+                right: null,
+            });
+        }
+        if (event.type === 'heap_update' && event.heapId !== undefined) {
+            const node = this.heapNodes.get(event.heapId);
+            if (node) {
+                const field = event.property || '';
+                const existing = node.fields.find((f) => f.key === field);
+                const displayVal = String(event.value ?? '');
+                if (existing)
+                    existing.value = displayVal;
+                else
+                    node.fields.push({ key: field, value: displayVal });
+            }
+            else if (!event.heapId || event.heapId === 0) {
+                warnings.push(`⚠ NULL DEREFERENCE: Attempted to dereference a NULL pointer`);
+                const varName = event.varName || event.variableName;
+                if (varName && this.stackVars.has(varName)) {
+                    const sv = this.stackVars.get(varName);
+                    this.stackVars.set(varName, { ...sv, isDereferencingNull: true });
+                }
+            }
+        }
+        if (event.type === 'ptr_link') {
+            const srcId = event.heapId;
+            const dstId = event.value;
+            const field = event.property || 'next';
+            const node = this.heapNodes.get(srcId);
+            if (node) {
+                node[field] = dstId !== 0 ? `node_${dstId}` : null;
+                const fld = node.fields.find((f) => f.key === field);
+                if (fld)
+                    fld.value = dstId !== 0 ? '[Ref]' : 'NULL';
+                else
+                    node.fields.push({ key: field, value: dstId !== 0 ? '[Ref]' : 'NULL' });
+            }
+            else if (!srcId || srcId === 0) {
+                warnings.push(`⚠ NULL DEREFERENCE: Attempted to dereference a NULL pointer`);
+                const varName = event.varName || event.variableName;
+                if (varName && this.stackVars.has(varName)) {
+                    const sv = this.stackVars.get(varName);
+                    this.stackVars.set(varName, { ...sv, isDereferencingNull: true });
+                }
+            }
+        }
+        if (event.type === 'heap_free' && event.heapId !== undefined) {
+            const node = this.heapNodes.get(event.heapId);
+            if (!node) {
+                warnings.push(`⚠ INVALID FREE: Attempted to free memory that was never allocated`);
+            }
+            else if (node.isFreed) {
+                node.isDoubleFree = true;
+                warnings.push(`Double free detected on address 0x${((event.heapId * 64) + 0x55a0).toString(16).toUpperCase()}`);
+            }
+            else {
+                node.isFreed = true;
+            }
+        }
+        if (event.type === 'assignment') {
+            const isNull = event.heapId === undefined || event.heapId === 0;
+            this.stackVars.set(event.variableName, {
+                name: event.variableName,
+                value: isNull ? 'NULL' : `0x${(((event.heapId ?? 0) * 64) + 0x5500).toString(16).toUpperCase()}`,
+                pointsTo: isNull ? null : `node_${event.heapId}`,
+                isPointer: true,
+            });
+        }
+        let hasLeak = false;
+        let description = this.describeEvent(event);
+        if (event.type === 'execution_end') {
+            let leakedCount = 0;
+            for (const [, node] of this.heapNodes) {
+                if (!node.isFreed) {
+                    node.isLeaked = true;
+                    leakedCount++;
+                }
+            }
+            hasLeak = leakedCount > 0;
+            description = hasLeak
+                ? `Program terminated. ⚠ WARNING: ${leakedCount} memory leak(s) detected!`
+                : `Program terminated successfully. No memory leaks.`;
+        }
+        // Post the full graph state to webview
+        const msg = {
+            type: 'live_event',
+            step: this.stepCount,
+            line: this.currentLine,
+            description,
+            heap: Array.from(this.heapNodes.values()),
+            stack: Array.from(this.stackVars.values()),
+            hasLeak,
+            warnings
+        };
+        (__webpack_require__(8).appendFileSync)('/tmp/cpulse_log.json', JSON.stringify(msg) + '\n');
+        this.webview.postMessage(msg);
+    }
+    describeEvent(e) {
+        if (e.type === 'heap_create')
+            return `malloc() — created node (${e.varName}) @ 0x${(e.addr || 0).toString(16).toUpperCase()}`;
+        if (e.type === 'heap_update')
+            return `${e.varName}->${e.property} = ${e.value} (line ${e.lineNumber})`;
+        if (e.type === 'ptr_link')
+            return `${e.varName}->${e.property} → node_${e.value} (line ${e.lineNumber})`;
+        if (e.type === 'assignment')
+            return `${e.variableName} = node_${e.heapId} (line ${e.lineNumber})`;
+        return JSON.stringify(e);
+    }
+    stop() {
+        this.liveRunner?.stop();
+        this.liveServer?.stop();
+        this.liveRunner = null;
+        this.liveServer = null;
+    }
+    dispose() { this.stop(); }
+}
+exports.MessageHandler = MessageHandler;
+
+
+/***/ }),
+/* 4 */
+/***/ ((module) => {
+
+module.exports = require("path");
+
+/***/ }),
+/* 5 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CLiveServer = void 0;
+const net = __importStar(__webpack_require__(6));
+/**
+ * CLiveServer: A TCP server that receives newline-delimited JSON events
+ * from an instrumented C program running in the VS Code terminal.
+ *
+ * This mirrors JS-Pulse's LiveServer.ts exactly — same protocol, same JSON format.
+ */
+class CLiveServer {
+    onEvent;
+    server = null;
+    activeSocket = null;
+    port = 0;
+    buffer = '';
+    constructor(onEvent) {
+        this.onEvent = onEvent;
+    }
+    start() {
+        return new Promise((resolve, reject) => {
+            this.server = net.createServer((socket) => {
+                this.activeSocket = socket;
+                socket.on('data', (data) => {
+                    this.buffer += data.toString();
+                    this.processBuffer();
+                });
+                socket.on('end', () => {
+                    this.processBuffer();
+                    this.onEvent({ type: 'execution_end', timestamp: Date.now() });
+                    this.activeSocket = null;
+                });
+                socket.on('error', (err) => {
+                    console.error('[C-Pulse] Socket error:', err.message);
+                    this.activeSocket = null;
+                });
+            });
+            this.server.on('error', reject);
+            this.server.listen(0, '127.0.0.1', () => {
+                const addr = this.server.address();
+                this.port = addr.port;
+                console.log(`[C-Pulse] LiveServer on 127.0.0.1:${this.port}`);
+                resolve(this.port);
+            });
+        });
+    }
+    processBuffer() {
+        const lines = this.buffer.split('\n');
+        this.buffer = lines.pop() || '';
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed)
+                continue;
+            try {
+                const event = JSON.parse(trimmed);
+                this.onEvent(event);
+            }
+            catch {
+                // Not valid JSON — ignore
+            }
+        }
+    }
+    getPort() { return this.port; }
+    stop() {
+        this.activeSocket?.destroy();
+        this.activeSocket = null;
+        this.server?.close();
+        this.server = null;
+        this.buffer = '';
+        this.port = 0;
+    }
+}
+exports.CLiveServer = CLiveServer;
+
+
+/***/ }),
+/* 6 */
+/***/ ((module) => {
+
+module.exports = require("net");
+
+/***/ }),
+/* 7 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CLiveRunner = void 0;
+const vscode = __importStar(__webpack_require__(1));
+const fs = __importStar(__webpack_require__(8));
+const path = __importStar(__webpack_require__(4));
+const CInstrumenter_1 = __webpack_require__(9);
+/**
+ * CLiveRunner
+ *
+ * Instruments the C source file and spawns it in a VS Code integrated
+ * terminal — the EXACT same pattern as JS-Pulse's LiveRunner.ts.
+ *
+ * Flow:
+ *   1. CInstrumenter writes a temp .c file with cpulse_record() calls + preamble
+ *   2. We compile it with gcc
+ *   3. We run the binary in a named "C-Pulse Live" VS Code terminal
+ *   4. The binary streams JSON events to CLiveServer over TCP
+ */
+class CLiveRunner {
+    port;
+    terminal = null;
+    instrumenter = new CInstrumenter_1.CInstrumenter();
+    tmpC = null;
+    tmpBin = null;
+    constructor(port) {
+        this.port = port;
+    }
+    start(sourceFilePath) {
+        // 1. Instrument and write temp C file
+        const tmpC = this.instrumenter.instrument(sourceFilePath, this.port);
+        const tmpBin = tmpC.replace('.c', '');
+        this.tmpC = tmpC;
+        this.tmpBin = tmpBin;
+        const workspaceDir = path.dirname(sourceFilePath);
+        // 2. Create terminal
+        if (this.terminal) {
+            this.terminal.dispose();
+        }
+        this.terminal = vscode.window.createTerminal({
+            name: 'C-Pulse Live',
+            cwd: workspaceDir,
+        });
+        this.terminal.show(true); // show but keep focus on editor
+        // 3. Compile and run — same as JS-Pulse's `node ".dsa-live.js"`
+        this.terminal.sendText(`gcc -g "${tmpC}" -o "${tmpBin}" && echo "✅ Compiled OK — Starting..." && "${tmpBin}"`);
+    }
+    stop() {
+        this.terminal?.sendText('exit');
+        this.terminal?.dispose();
+        this.terminal = null;
+        // Clean up temp files
+        if (this.tmpC && fs.existsSync(this.tmpC)) {
+            try {
+                fs.unlinkSync(this.tmpC);
+            }
+            catch { }
+        }
+        if (this.tmpBin && fs.existsSync(this.tmpBin)) {
+            try {
+                fs.unlinkSync(this.tmpBin);
+            }
+            catch { }
+        }
+        this.tmpC = null;
+        this.tmpBin = null;
+    }
+}
+exports.CLiveRunner = CLiveRunner;
+
+
+/***/ }),
+/* 8 */
+/***/ ((module) => {
+
+module.exports = require("fs");
+
+/***/ }),
+/* 9 */
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
+
+
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.CInstrumenter = void 0;
+const fs = __importStar(__webpack_require__(8));
+const path = __importStar(__webpack_require__(4));
+const os = __importStar(__webpack_require__(10));
+class CInstrumenter {
+    instrument(sourceFilePath, tcpPort) {
+        const userCode = fs.readFileSync(sourceFilePath, 'utf-8');
+        const instrumented = this.injectCalls(userCode);
+        const preamble = this.buildPreamble(tcpPort);
+        const full = `${preamble}\n/* ── User code: ${path.basename(sourceFilePath)} ── */\n${instrumented}`;
+        const tmpPath = path.join(os.tmpdir(), '.cpulse_instrumented.c');
+        fs.writeFileSync(tmpPath, full, 'utf-8');
+        return tmpPath;
+    }
+    injectCalls(source) {
+        const lines = source.split('\n');
+        const out = [];
+        const SKIP = ['if', 'while', 'for', 'return', 'else', 'sizeof', 'NULL', '0'];
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const t = line.trim();
+            const indent = line.match(/^(\s*)/)?.[1] ?? '';
+            const ln = i + 1;
+            out.push(line);
+            if (!t || t.startsWith('//') || t.startsWith('#') || t.startsWith('*') || t.startsWith('/*'))
+                continue;
+            // ── free(var) → heap_free event ──────────────────────────────
+            const freeMatch = t.match(/^free\s*\(\s*(\w+)\s*\)\s*;$/);
+            if (freeMatch) {
+                const v = freeMatch[1];
+                out.push(`${indent}cpulse_heap_free((void*)(${v}), "${v}", ${ln});`);
+                continue;
+            }
+            // ── malloc → heap_create event ────────────────────────────────
+            // Matches: newNode = malloc(...) OR struct Node* newNode = (cast)malloc(...)
+            const mallocMatch = t.match(/(\w+)\s*=\s*(?:\([^)]*\)\s*)?malloc\s*\(/);
+            if (mallocMatch) {
+                const v = mallocMatch[1];
+                if (!SKIP.includes(v)) {
+                    out.push(`${indent}if (${v}) cpulse_heap_create((void*)(${v}), "${v}", ${ln});`);
+                    continue;
+                }
+            }
+            // ── ptr->field = scalar (data, val, etc.) → field update ─────
+            const fieldMatch = t.match(/^(\w+)\s*->\s*((?!next\b|left\b|right\b|prev\b)\w+)\s*=\s*([^;]+);$/);
+            if (fieldMatch) {
+                const [, pv, field, value] = fieldMatch;
+                if (!SKIP.includes(pv)) {
+                    out.push(`${indent}cpulse_field_str((void*)(${pv}), "${pv}", "${field}", (long long)(${value}), ${ln});`);
+                    continue;
+                }
+            }
+            // ── ptr->next = ptr2->next  (pointer relink via another pointer's field) ─
+            // e.g. curr->next = temp->next  →  read lhs->field after assignment
+            const relinkMatch = t.match(/^(\w+)\s*->\s*(next|left|right|prev)\s*=\s*(\w+)\s*->\s*(next|left|right|prev)\s*;$/);
+            if (relinkMatch) {
+                const [, dstVar, dstField] = relinkMatch;
+                // After the C line executes, dstVar->dstField == the new target (already set)
+                out.push(`${indent}cpulse_ptr_link((void*)(${dstVar}), "${dstVar}", "${dstField}", (void*)(${dstVar}->${dstField}), "${dstVar}->${dstField}", ${ln});`);
+                continue;
+            }
+            // ── ptr->next = other  (pointer link) ─────────────────────────
+            const nexMatch = t.match(/^(\w+)\s*->\s*(next|left|right|prev)\s*=\s*(\w+)\s*;$/);
+            if (nexMatch) {
+                const [, sv, field, dv] = nexMatch;
+                if (dv === 'NULL') {
+                    out.push(`${indent}cpulse_ptr_link((void*)(${sv}), "${sv}", "${field}", NULL, "NULL", ${ln});`);
+                }
+                else {
+                    out.push(`${indent}cpulse_ptr_link((void*)(${sv}), "${sv}", "${field}", (void*)(${dv}), "${dv}", ${ln});`);
+                }
+                continue;
+            }
+            // ── ptr = other / ptr = ptr->next / ptr = NULL ──────────────
+            const ptrAsgn = t.match(/^(\w+)\s*=\s*(\w+)(?:->(?:next|left|right|prev))?\s*;$/);
+            if (ptrAsgn) {
+                const [, lhs, rhs] = ptrAsgn;
+                const isNumeric = /^\d+$/.test(rhs);
+                const isReserved = ['if', 'while', 'for', 'return', 'else', 'sizeof'].includes(rhs);
+                if (!isNumeric && !isReserved && !SKIP.includes(lhs)) {
+                    out.push(`${indent}cpulse_assignment("${lhs}", (void*)(${lhs}), ${ln});`);
+                }
+                continue;
+            }
+        }
+        return out.join('\n');
+    }
+    buildPreamble(port) {
+        return `/* === C-Pulse Live Preamble === */
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
+#define CPULSE_MAX 1024
+typedef struct { void* ptr; int id; } CpEntry;
+static CpEntry __cp_reg[CPULSE_MAX];
+static int     __cp_count   = 0;
+static int     __cp_next_id = 1;
+static int     __cp_ts      = 0;
+static int     __cp_sock    = -1;
+
+static int __cp_get(void* p) {
+    for (int i = 0; i < __cp_count; i++)
+        if (__cp_reg[i].ptr == p) return __cp_reg[i].id;
+    return 0;
+}
+static int __cp_reg_ptr(void* p) {
+    if (!p) return 0;
+    int x = __cp_get(p); if (x) return x;
+    int id = __cp_next_id++;
+    if (__cp_count < CPULSE_MAX) { __cp_reg[__cp_count].ptr = p; __cp_reg[__cp_count].id = id; __cp_count++; }
+    return id;
+}
+static void __cp_remove(void* p) {
+    for (int i = 0; i < __cp_count; i++) {
+        if (__cp_reg[i].ptr == p) { __cp_reg[i] = __cp_reg[--__cp_count]; return; }
+    }
+}
+static void __cp_send(const char* j) {
+    if (__cp_sock < 0) return;
+    char buf[2048]; int n = snprintf(buf, sizeof(buf), "%s\\n", j);
+    send(__cp_sock, buf, (size_t)n, MSG_NOSIGNAL);
+}
+
+static void __attribute__((constructor)) cpulse_init() {
+    struct sockaddr_in s; memset(&s,0,sizeof(s));
+    s.sin_family = AF_INET; s.sin_port = htons(${port});
+    inet_pton(AF_INET, "127.0.0.1", &s.sin_addr);
+    for (int i = 0; i < 10; i++) {
+        __cp_sock = socket(AF_INET, SOCK_STREAM, 0);
+        if (__cp_sock >= 0 && connect(__cp_sock, (struct sockaddr*)&s, sizeof(s)) == 0) return;
+        if (__cp_sock >= 0) { close(__cp_sock); __cp_sock = -1; }
+        usleep(150000);
+    }
+    fprintf(stderr, "[C-Pulse] Could not connect on port ${port}\\n");
+}
+static void __attribute__((destructor)) cpulse_exit() {
+    if (__cp_sock >= 0) { shutdown(__cp_sock, SHUT_RDWR); close(__cp_sock); __cp_sock = -1; }
+}
+
+void cpulse_heap_create(void* ptr, const char* var, int line) {
+    int id = __cp_reg_ptr(ptr);
+    char j[512];
+    snprintf(j, sizeof(j),
+        "{\\"type\\":\\"heap_create\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"addr\\":%lu,\\"lineNumber\\":%d}",
+        __cp_ts++, id, var, (unsigned long)ptr, line);
+    __cp_send(j);
+}
+void cpulse_heap_free(void* ptr, const char* var, int line) {
+    int id = __cp_get(ptr);
+    if (!id) return;
+    char j[256];
+    snprintf(j, sizeof(j),
+        "{\\"type\\":\\"heap_free\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"lineNumber\\":%d}",
+        __cp_ts++, id, var, line);
+    __cp_send(j);
+    __cp_remove(ptr);
+}
+void cpulse_field_str(void* ptr, const char* var, const char* field, long long val, int line) {
+    int id = __cp_get(ptr); if (!id) return;
+    char j[512];
+    snprintf(j, sizeof(j),
+        "{\\"type\\":\\"heap_update\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"property\\":\\"%s\\",\\"value\\":%lld,\\"lineNumber\\":%d}",
+        __cp_ts++, id, var, field, val, line);
+    __cp_send(j);
+}
+void cpulse_ptr_link(void* src, const char* sv, const char* field, void* dst, const char* dv, int line) {
+    int si = __cp_get(src); if (!si) return;
+    int di = dst ? __cp_reg_ptr(dst) : 0;
+    char j[512];
+    snprintf(j, sizeof(j),
+        "{\\"type\\":\\"ptr_link\\",\\"timestamp\\":%d,\\"heapId\\":%d,\\"varName\\":\\"%s\\",\\"property\\":\\"%s\\",\\"value\\":%d,\\"targetVar\\":\\"%s\\",\\"lineNumber\\":%d}",
+        __cp_ts++, si, sv, field, di, dv, line);
+    __cp_send(j);
+}
+void cpulse_assignment(const char* var, void* ptr, int line) {
+    int id = __cp_get(ptr);
+    char j[256];
+    snprintf(j, sizeof(j),
+        "{\\"type\\":\\"assignment\\",\\"timestamp\\":%d,\\"variableName\\":\\"%s\\",\\"heapId\\":%d,\\"addr\\":%lu,\\"lineNumber\\":%d}",
+        __cp_ts++, var, id, (unsigned long)ptr, line);
+    __cp_send(j);
+}
+
+void cpulse_heap_create(void*, const char*, int);
+void cpulse_heap_free(void*, const char*, int);
+void cpulse_field_str(void*, const char*, const char*, long long, int);
+void cpulse_ptr_link(void*, const char*, const char*, void*, const char*, int);
+void cpulse_assignment(const char*, void*, int);
+/* === End Preamble === */
+`;
+    }
+}
+exports.CInstrumenter = CInstrumenter;
+
+
+/***/ }),
+/* 10 */
+/***/ ((module) => {
+
+module.exports = require("os");
+
+/***/ })
+/******/ 	]);
+/************************************************************************/
+/******/ 	// The module cache
+/******/ 	var __webpack_module_cache__ = {};
+/******/ 	
+/******/ 	// The require function
+/******/ 	function __webpack_require__(moduleId) {
+/******/ 		// Check if module is in cache
+/******/ 		var cachedModule = __webpack_module_cache__[moduleId];
+/******/ 		if (cachedModule !== undefined) {
+/******/ 			return cachedModule.exports;
+/******/ 		}
+/******/ 		// Create a new module (and put it into the cache)
+/******/ 		var module = __webpack_module_cache__[moduleId] = {
+/******/ 			// no module.id needed
+/******/ 			// no module.loaded needed
+/******/ 			exports: {}
+/******/ 		};
+/******/ 	
+/******/ 		// Execute the module function
+/******/ 		__webpack_modules__[moduleId].call(module.exports, module, module.exports, __webpack_require__);
+/******/ 	
+/******/ 		// Return the exports of the module
+/******/ 		return module.exports;
+/******/ 	}
+/******/ 	
+/************************************************************************/
+/******/ 	
+/******/ 	// startup
+/******/ 	// Load entry module and return exports
+/******/ 	// This entry module is referenced by other modules so it can't be inlined
+/******/ 	var __webpack_exports__ = __webpack_require__(0);
+/******/ 	module.exports = __webpack_exports__;
+/******/ 	
+/******/ })()
+;
+//# sourceMappingURL=extension.js.map

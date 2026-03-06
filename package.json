@@ -1,6 +1,6 @@
 {
   "name": "c-pulse",
-  "displayName": "c-pulse",
+  "displayName": "C-Pulse",
   "description": "C Data Structures & Algorithms Visualizer",
   "version": "0.0.1",
   "engines": {
@@ -9,13 +9,24 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:c"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
       {
         "command": "c-pulse.start",
-        "title": "C-Pulse: Start Visualizer"
+        "title": "C-Pulse: Visualize",
+        "icon": "$(play-circle)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "c-pulse.start",
+        "key": "ctrl+shift+p",
+        "mac": "cmd+shift+p",
+        "when": "resourceLangId == c"
       }
     ]
   },
@@ -23,7 +34,13 @@
     "vscode:prepublish": "npm run package",
     "compile": "webpack",
     "watch": "webpack --watch",
-    "package": "webpack --mode production --devtool hidden-source-map",
+    "watch:webview": "cd webview-ui && npm run build -- --watch",
+    "dev": "concurrently -c \"cyan,magenta\" \"npm run watch\" \"npm run watch:webview\"",
+    "build:extension": "webpack --mode production --devtool hidden-source-map",
+    "build:webview": "cd webview-ui && npm run build",
+    "build": "npm run build:extension && npm run build:webview",
+    "package": "npm run build",
+    "clean": "rm -rf dist out webview-ui/dist",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",
@@ -31,16 +48,17 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.109.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "typescript-eslint": "^8.56.1",
-    "eslint": "^9.39.3",
-    "typescript": "^5.9.3",
-    "ts-loader": "^9.5.4",
-    "webpack": "^5.105.3",
-    "webpack-cli": "^6.0.1",
+    "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
-    "@vscode/test-electron": "^2.5.2"
+    "@vscode/test-electron": "^2.5.2",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.39.3",
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.1",
+    "webpack": "^5.105.3",
+    "webpack-cli": "^6.0.1"
   }
 }

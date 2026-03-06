@@ -46,3 +46,70 @@
     padding: 2px 6px;
     border-radius: 3px;
 }
+
+.animated-path {
+    transition: d 0.4s cubic-bezier(0.25, 1, 0.5, 1), stroke 0.4s ease, stroke-width 0.4s ease;
+}
+
+.pointer-reassigned {
+    animation: pointer-reassigned-anim 0.5s ease-out;
+}
+
+@keyframes pointer-reassigned-anim {
+    0% {
+        filter: drop-shadow(0 0 8px #ffeb3b);
+        stroke: #ffeb3b;
+        stroke-width: 4px;
+    }
+
+    100% {
+        filter: drop-shadow(0 0 3px #4fc3f7);
+        stroke: #4fc3f7;
+        stroke-width: 1.5px;
+    }
+}
+
+.node-pulse {
+    animation: node-pulse-anim 0.5s ease-out;
+}
+
+@keyframes node-pulse-anim {
+    0% {
+        filter: drop-shadow(0 0 12px #ffeb3b);
+        stroke: #ffeb3b;
+    }
+
+    100% {
+        filter: drop-shadow(0 0 3px #4fc3f7);
+        stroke: #4fc3f7;
+    }
+}
+.node-tooltip {
+    position: absolute;
+    background: rgba(13, 27, 42, 0.95);
+    border: 1px solid #4fc3f7;
+    border-radius: 4px;
+    padding: 8px 12px;
+    color: #e0e0e0;
+    font-family: monospace;
+    font-size: 11px;
+    pointer-events: none;
+    z-index: 1000;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    backdrop-filter: blur(4px);
+}
+.tooltip-section {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.tooltip-key {
+    color: #90caf9;
+    font-weight: bold;
+}
+.tooltip-divider {
+    height: 1px;
+    background: #1c3a52;
+    margin: 4px 0;
+}

@@ -1,0 +1,58 @@
+.code-viewer {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    background-color: #0d1b2a;
+    color: #e0e0e0;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.code-viewer-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: #546e7a;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    background-color: #0d1b2a;
+}
+
+.code-lines {
+    padding: 10px 0;
+}
+
+.code-line {
+    display: flex;
+    white-space: pre;
+    padding: 0 10px;
+}
+
+.code-line.active-line {
+    background-color: rgba(79, 195, 247, 0.2);
+    border-left: 3px solid #4fc3f7;
+    padding-left: 7px;
+    /* compensate for border */
+}
+
+.line-number {
+    display: inline-block;
+    width: 35px;
+    min-width: 35px;
+    color: #546e7a;
+    text-align: right;
+    margin-right: 15px;
+    user-select: none;
+}
+
+.line-content {
+    flex: 1;
+    color: #b0bec5;
+}
+
+.code-line.active-line .line-content {
+    color: #ffffff;
+    font-weight: bold;
+}

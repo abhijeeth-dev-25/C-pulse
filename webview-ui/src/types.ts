@@ -7,6 +7,9 @@ export interface HeapNode {
     next: string | null;
     left: string | null;
     right: string | null;
+    isFreed?: boolean;
+    isLeaked?: boolean;
+    isDoubleFree?: boolean;
 }
 
 export interface StackVar {
@@ -14,6 +17,7 @@ export interface StackVar {
     value: string;
     pointsTo: string | null;
     isPointer: boolean;
+    isDereferencingNull?: boolean;
 }
 
 export interface Snapshot {
@@ -22,4 +26,6 @@ export interface Snapshot {
     description: string;
     stack: StackVar[];
     heap: HeapNode[];
+    hasLeak?: boolean;
+    warnings?: string[];
 }

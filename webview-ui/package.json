@@ -16,6 +16,7 @@
     "dagre": "^0.8.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "react-resizable-panels": "^4.7.1",
     "webview-ui-toolkit": "^0.0.0"
   },
   "devDependencies": {

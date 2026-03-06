@@ -27,7 +27,7 @@ export class MessageHandler {
     constructor(private webview: vscode.Webview) { }
 
     public async handleMessage(message: any) {
-        switch (message.command) {
+        switch (message.command || message.type) {
             case 'ready': {
                 await this.startLiveTrace();
                 break;
@@ -43,12 +43,20 @@ export class MessageHandler {
                 }
                 break;
             }
+            case 'load_file_path': {
+                // Direct path retrace — triggered by auto-save in extension.ts
+                if (message.filePath) {
+                    await this.startLiveTrace(message.filePath);
+                }
+                break;
+            }
             case 'stop': {
                 this.stop();
                 break;
             }
         }
     }
+
 
     private async startLiveTrace(filePath?: string) {
         // Stop previous session
@@ -81,6 +89,7 @@ export class MessageHandler {
         this.webview.postMessage({
             type: 'live_start',
             fileName: path.basename(targetPath),
+            code: require('fs').readFileSync(targetPath, 'utf8')
         });
 
         // 1. Start TCP server
@@ -99,6 +108,7 @@ export class MessageHandler {
     private onEvent(event: ExecutionEvent) {
         this.stepCount++;
         this.currentLine = event.lineNumber ?? this.currentLine;
+        let warnings: string[] = [];
 
         if (event.type === 'heap_create' && event.heapId !== undefined) {
             this.heapNodes.set(event.heapId, {
@@ -121,6 +131,13 @@ export class MessageHandler {
                 const displayVal = String(event.value ?? '');
                 if (existing) existing.value = displayVal;
                 else node.fields.push({ key: field, value: displayVal });
+            } else if (!event.heapId || event.heapId === 0) {
+                warnings.push(`⚠ NULL DEREFERENCE: Attempted to dereference a NULL pointer`);
+                const varName = (event as any).varName || event.variableName;
+                if (varName && this.stackVars.has(varName)) {
+                    const sv = this.stackVars.get(varName)!;
+                    this.stackVars.set(varName, { ...sv, isDereferencingNull: true });
+                }
             }
         }
 
@@ -134,27 +151,25 @@ export class MessageHandler {
                 const fld = node.fields.find((f: any) => f.key === field);
                 if (fld) fld.value = dstId !== 0 ? '[Ref]' : 'NULL';
                 else node.fields.push({ key: field, value: dstId !== 0 ? '[Ref]' : 'NULL' });
+            } else if (!srcId || srcId === 0) {
+                warnings.push(`⚠ NULL DEREFERENCE: Attempted to dereference a NULL pointer`);
+                const varName = (event as any).varName || event.variableName;
+                if (varName && this.stackVars.has(varName)) {
+                    const sv = this.stackVars.get(varName)!;
+                    this.stackVars.set(varName, { ...sv, isDereferencingNull: true });
+                }
             }
         }
 
         if ((event.type as any) === 'heap_free' && event.heapId !== undefined) {
-            // Node was free()'d — remove it from the graph
-            this.heapNodes.delete(event.heapId);
-            // Update stack vars that pointed to this node to NULL
-            for (const [key, sv] of this.stackVars) {
-                if (sv.pointsTo === `node_${event.heapId}`) {
-                    this.stackVars.set(key, { ...sv, pointsTo: null, value: 'NULL', isPointer: true });
-                }
-            }
-            // Also clear any next/left/right pointers FROM other nodes to this freed node
-            for (const [, hn] of this.heapNodes) {
-                for (const field of ['next', 'left', 'right', 'prev']) {
-                    if (hn[field] === `node_${event.heapId}`) {
-                        hn[field] = null;
-                        const fld = hn.fields.find((f: any) => f.key === field);
-                        if (fld) fld.value = 'NULL';
-                    }
-                }
+            const node = this.heapNodes.get(event.heapId);
+            if (!node) {
+                warnings.push(`⚠ INVALID FREE: Attempted to free memory that was never allocated`);
+            } else if (node.isFreed) {
+                node.isDoubleFree = true;
+                warnings.push(`Double free detected on address 0x${((event.heapId * 64) + 0x55a0).toString(16).toUpperCase()}`);
+            } else {
+                node.isFreed = true;
             }
         }
 
@@ -168,15 +183,36 @@ export class MessageHandler {
             });
         }
 
+        let hasLeak = false;
+        let description = this.describeEvent(event);
+
+        if (event.type === 'execution_end') {
+            let leakedCount = 0;
+            for (const [, node] of this.heapNodes) {
+                if (!node.isFreed) {
+                    node.isLeaked = true;
+                    leakedCount++;
+                }
+            }
+            hasLeak = leakedCount > 0;
+            description = hasLeak
+                ? `Program terminated. ⚠ WARNING: ${leakedCount} memory leak(s) detected!`
+                : `Program terminated successfully. No memory leaks.`;
+        }
+
         // Post the full graph state to webview
-        this.webview.postMessage({
+        const msg = {
             type: 'live_event',
             step: this.stepCount,
             line: this.currentLine,
-            description: this.describeEvent(event),
+            description,
             heap: Array.from(this.heapNodes.values()),
             stack: Array.from(this.stackVars.values()),
-        });
+            hasLeak,
+            warnings
+        };
+        require('fs').appendFileSync('/tmp/cpulse_log.json', JSON.stringify(msg) + '\n');
+        this.webview.postMessage(msg);
     }
 
     private describeEvent(e: ExecutionEvent): string {

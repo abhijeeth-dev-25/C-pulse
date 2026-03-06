@@ -1,7 +1,7 @@
 import * as net from 'net';
 
 export interface ExecutionEvent {
-    type: 'heap_create' | 'heap_update' | 'assignment';
+    type: 'heap_create' | 'heap_update' | 'heap_free' | 'assignment' | 'execution_end';
     heapId?: number;
     value?: any;
     property?: string;
@@ -36,6 +36,7 @@ export class CLiveServer {
 
                 socket.on('end', () => {
                     this.processBuffer();
+                    this.onEvent({ type: 'execution_end', timestamp: Date.now() });
                     this.activeSocket = null;
                 });
 

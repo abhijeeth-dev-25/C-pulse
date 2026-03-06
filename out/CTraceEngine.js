@@ -1,0 +1,215 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.CTraceEngine = void 0;
+const fs = __importStar(require("fs"));
+/**
+ * CTraceEngine: reads a C source file and generates a sequence of
+ * memory snapshots by statically analyzing DSA operations (malloc,
+ * pointer assignments, struct field updates).
+ */
+class CTraceEngine {
+    heap = new Map();
+    stack = new Map();
+    snapshots = [];
+    nodeCounter = 0;
+    generateSnapshots(filePath) {
+        this.heap.clear();
+        this.stack.clear();
+        this.snapshots = [];
+        this.nodeCounter = 0;
+        if (!fs.existsSync(filePath)) {
+            return [];
+        }
+        const source = fs.readFileSync(filePath, "utf-8");
+        const lines = source.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            const lineNum = i + 1;
+            const line = lines[i].trim();
+            this.processLine(line, lineNum);
+        }
+        return this.snapshots;
+    }
+    processLine(line, lineNum) {
+        // Skip blank lines and comments
+        if (!line || line.startsWith("//") || line.startsWith("*") || line.startsWith("/*")) {
+            return;
+        }
+        // ── MALLOC: Node creation ──
+        // Pattern: struct Node* newNode = (struct Node*)malloc(...)
+        // Pattern: Node* x = malloc(...)
+        const mallocMatch = line.match(/(\w+)\s*=\s*(?:\([^)]+\))?\s*malloc\s*\(/);
+        if (mallocMatch) {
+            const varName = mallocMatch[1];
+            const nodeId = `node_${++this.nodeCounter}`;
+            const newNode = {
+                id: nodeId,
+                label: `{${varName}}`,
+                fields: [{ key: "data", value: "?" }, { key: "next", value: "NULL" }],
+                next: null,
+                left: null,
+                right: null,
+            };
+            this.heap.set(nodeId, newNode);
+            // Create/update the stack variable
+            this.stack.set(varName, {
+                name: varName,
+                value: `0x${(this.nodeCounter * 0x10).toString(16).padStart(4, "0")}`,
+                pointsTo: nodeId,
+                isPointer: true,
+            });
+            this.captureSnapshot(lineNum, `malloc() — created new node (${varName})`);
+            return;
+        }
+        // ── FIELD ASSIGNMENT: newNode->data = val ──
+        const fieldAssignMatch = line.match(/(\w+)\s*->\s*(\w+)\s*=\s*([^;]+)/);
+        if (fieldAssignMatch && !line.includes("->next")) {
+            const varName = fieldAssignMatch[1];
+            const field = fieldAssignMatch[2];
+            let value = fieldAssignMatch[3].trim().replace(/['"]/g, "");
+            const sv = this.stack.get(varName);
+            if (sv?.pointsTo) {
+                const node = this.heap.get(sv.pointsTo);
+                if (node) {
+                    const existingField = node.fields.find((f) => f.key === field);
+                    if (existingField) {
+                        existingField.value = value;
+                    }
+                    else {
+                        node.fields.push({ key: field, value });
+                    }
+                    node.label = this.buildLabel(node);
+                    this.captureSnapshot(lineNum, `${varName}->${field} = ${value}`);
+                }
+            }
+            return;
+        }
+        // ── POINTER LINK: x->next = y ──
+        const nextAssignMatch = line.match(/(\w+)\s*->\s*next\s*=\s*(\w+)/);
+        if (nextAssignMatch) {
+            const srcVar = nextAssignMatch[1];
+            const dstVar = nextAssignMatch[2];
+            const srcSV = this.stack.get(srcVar);
+            if (srcSV?.pointsTo) {
+                const srcNode = this.heap.get(srcSV.pointsTo);
+                if (srcNode) {
+                    if (dstVar === "NULL" || dstVar === "null") {
+                        srcNode.next = null;
+                        srcNode.fields = srcNode.fields.filter((f) => f.key !== "next");
+                        srcNode.fields.push({ key: "next", value: "NULL" });
+                    }
+                    else {
+                        const dstSV = this.stack.get(dstVar);
+                        if (dstSV?.pointsTo) {
+                            srcNode.next = dstSV.pointsTo;
+                            srcNode.fields = srcNode.fields.filter((f) => f.key !== "next");
+                            srcNode.fields.push({ key: "next", value: `[Ref]` });
+                        }
+                    }
+                    this.captureSnapshot(lineNum, `${srcVar}->next = ${dstVar}`);
+                }
+            }
+            return;
+        }
+        // ── POINTER ASSIGNMENT: head = newNode / curr = curr->next ──
+        const ptrAssignMatch = line.match(/^(\w+)\s*=\s*(\w+)(?:->next)?;/);
+        if (ptrAssignMatch) {
+            const lhs = ptrAssignMatch[1];
+            const rhs = ptrAssignMatch[2];
+            const rhsSV = this.stack.get(rhs);
+            if (rhsSV?.isPointer) {
+                // Traverse: curr = curr->next
+                if (line.includes("->next")) {
+                    const curSV = this.stack.get(lhs);
+                    if (curSV?.pointsTo) {
+                        const curNode = this.heap.get(curSV.pointsTo);
+                        if (curNode?.next) {
+                            curSV.pointsTo = curNode.next;
+                            this.captureSnapshot(lineNum, `${lhs} = ${rhs}->next (traversing)`);
+                        }
+                    }
+                    else {
+                        this.stack.set(lhs, {
+                            name: lhs,
+                            value: rhsSV.value,
+                            pointsTo: rhsSV.pointsTo,
+                            isPointer: true,
+                        });
+                        this.captureSnapshot(lineNum, `${lhs} = ${rhs}->next`);
+                    }
+                }
+                else {
+                    // head = newNode
+                    this.stack.set(lhs, {
+                        name: lhs,
+                        value: rhsSV.value,
+                        pointsTo: rhsSV.pointsTo,
+                        isPointer: true,
+                    });
+                    this.captureSnapshot(lineNum, `${lhs} = ${rhs}`);
+                }
+            }
+            else if (rhs === "NULL" || rhs === "null") {
+                const existing = this.stack.get(lhs);
+                if (existing) {
+                    existing.pointsTo = null;
+                    existing.value = "NULL";
+                    this.captureSnapshot(lineNum, `${lhs} = NULL`);
+                }
+            }
+        }
+    }
+    buildLabel(node) {
+        const pairs = node.fields.map((f) => `${f.key}: ${f.value}`).join(", ");
+        return `{${pairs}}`;
+    }
+    captureSnapshot(line, description) {
+        const snapshot = {
+            step: this.snapshots.length + 1,
+            line,
+            description,
+            // Deep copy stack
+            stack: Array.from(this.stack.values()).map((v) => ({ ...v })),
+            // Deep copy heap
+            heap: Array.from(this.heap.values()).map((n) => ({
+                ...n,
+                fields: n.fields.map((f) => ({ ...f })),
+            })),
+        };
+        this.snapshots.push(snapshot);
+    }
+}
+exports.CTraceEngine = CTraceEngine;
+//# sourceMappingURL=CTraceEngine.js.map

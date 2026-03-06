@@ -17,7 +17,7 @@ export class CInstrumenter {
     private injectCalls(source: string): string {
         const lines = source.split('\n');
         const out: string[] = [];
-        const SKIP = ['if', 'while', 'for', 'return', 'else', 'sizeof', 'NULL', '0', 'size', 'data', 'val', 'choice', 'newVal', 'oldVal'];
+        const SKIP = ['if', 'while', 'for', 'return', 'else', 'sizeof', 'NULL', '0'];
 
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];

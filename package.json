@@ -3,7 +3,7 @@
   "displayName": "C-Pulse",
   "publisher": "abhijeeth-dev-25",
   "description": "C Data Structures & Algorithms Visualizer",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "icon": "images/icon.jpg",
   "keywords": [
     "c",

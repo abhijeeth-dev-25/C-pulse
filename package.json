@@ -1,14 +1,28 @@
 {
   "name": "c-pulse",
   "displayName": "C-Pulse",
+  "publisher": "abhijeeth-dev-25",
   "description": "C Data Structures & Algorithms Visualizer",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "icon": "images/icon.jpg",
+  "keywords": [
+    "c",
+    "visualization",
+    "debugger",
+    "memory",
+    "pointers"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/abhijeeth-dev-25/C-pulse.git"
+  },
   "engines": {
-    "vscode": "^1.107.0"
+    "vscode": "^1.70.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Education",
+    "Debuggers"
   ],
   "activationEvents": [
     "onLanguage:c"
@@ -51,7 +65,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.109.0",
+    "@types/vscode": "^1.70.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "concurrently": "^9.2.1",

@@ -12,7 +12,7 @@
 
 ## 📸 Demo
 
-https://github.com/abhijeeth-dev-25/C-pulse/raw/main/images/linkedlist.mov
+![C-Pulse Live Memory Tracing](https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/linkedlist.gif)
 
 *(A live preview of C-Pulse visually tracing linked list manipulation memory addresses dynamically.)*
 

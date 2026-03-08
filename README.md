@@ -12,8 +12,8 @@
 
 ## 📸 Demo
 
-<video src="https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/linkedlist.mov" autoplay loop muted controls style="max-width: 100%;">
-  <a href="https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/linkedlist.mov">Watch the Demo Video</a>
+<video src="images/linkedlist.mov" autoplay loop muted controls style="max-width: 100%;">
+  <a href="images/linkedlist.mov">Watch the Demo Video</a>
 </video>
 *(A live preview of C-Pulse visually tracing linked list manipulation memory addresses dynamically.)*
 

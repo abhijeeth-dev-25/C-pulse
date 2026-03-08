@@ -10,15 +10,6 @@
 
 ---
 
-## 📸 Demo
-
-<video src="images/demo_video.mov" autoplay loop muted controls style="max-width: 100%;">
-  <a href="images/demo_video.mov">Watch the Demo Video</a>
-</video>
-*(A live preview of C-Pulse visually tracing linked list manipulation memory addresses dynamically.)*
-
----
-
 ## 🚀 Screenshots
 
 ![Workspace Interface Overview](images/screenshot_1.png)  

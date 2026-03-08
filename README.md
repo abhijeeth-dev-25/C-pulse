@@ -12,15 +12,26 @@
 
 ## 📸 Demo
 
-![C-Pulse Live Memory Tracing](docs/demo.gif)  
+<video src="images/demo_video.mov" autoplay loop muted controls style="max-width: 100%;">
+  <a href="images/demo_video.mov">Watch the Demo Video</a>
+</video>
 *(A live preview of C-Pulse visually tracing linked list manipulation memory addresses dynamically.)*
 
 ---
 
 ## 🚀 Screenshots
 
-![Workspace Interface Overview](docs/screenshot_1.png)  
+![Workspace Interface Overview](images/screenshot_1.png)  
 *(The main UI features synchronized code execution, stack/heap boundaries, and real-time inspector layers.)*
+
+![Execution Timeline](images/screenshot_2.png)  
+*(Interactive timeline scrubbing and memory visualizations.)*
+
+![Graph Structure](images/screenshot_3.png)  
+*(Visualizing complex pointer relationships and heap allocations.)*
+
+![Advanced View](images/screenshot_4.png)  
+*(Deep inspection of pointers, addresses, and data structures.)*
 
 ---
 

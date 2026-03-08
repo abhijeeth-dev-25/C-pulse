@@ -80,6 +80,17 @@ export class CInstrumenter {
                 continue;
             }
 
+            // ── ptr->field = functionCall(...)  (pointer link via return value) ──
+            // e.g. parent->left = createNode(newValue);
+            const fnCallLinkMatch = t.match(/^(\w+)\s*->\s*(next|left|right|prev)\s*=\s*(\w+)\s*\(([^)]*)\)\s*;$/);
+            if (fnCallLinkMatch) {
+                const [, sv, field] = fnCallLinkMatch;
+                // After the C line executes, sv->field holds the new pointer
+                // We just read sv->field to emit the link event
+                out.push(`${indent}cpulse_ptr_link((void*)(${sv}), "${sv}", "${field}", (void*)(${sv}->${field}), "${sv}->${field}", ${ln});`);
+                continue;
+            }
+
             // ── ptr = other / ptr = ptr->next / ptr = NULL ──────────────
             const ptrAsgn = t.match(/^(\w+)\s*=\s*(\w+)(?:->(?:next|left|right|prev))?\s*;$/);
             if (ptrAsgn) {
@@ -88,6 +99,19 @@ export class CInstrumenter {
                 const isReserved = ['if', 'while', 'for', 'return', 'else', 'sizeof'].includes(rhs);
                 if (!isNumeric && !isReserved && !SKIP.includes(lhs)) {
                     out.push(`${indent}cpulse_assignment("${lhs}", (void*)(${lhs}), ${ln});`);
+                }
+                continue;
+            }
+
+            // ── var = functionCall(...)  (pointer assignment from return value) ──
+            // e.g. root = createNode(rootValue);  OR  result = search(root, key);
+            const fnCallAsgn = t.match(/^(\w+)\s*=\s*(\w+)\s*\(([^)]*)\)\s*;$/);
+            if (fnCallAsgn) {
+                const [, lhs] = fnCallAsgn;
+                const isReserved = ['if', 'while', 'for', 'return', 'else', 'sizeof'].includes(lhs);
+                if (!isReserved && !SKIP.includes(lhs)) {
+                    // After the function returns and the assignment is done, emit the assignment event
+                    out.push(`${indent}if (${lhs}) cpulse_assignment("${lhs}", (void*)(${lhs}), ${ln});`);
                 }
                 continue;
             }

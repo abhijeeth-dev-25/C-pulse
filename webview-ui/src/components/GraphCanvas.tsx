@@ -9,9 +9,11 @@ interface GraphCanvasProps {
 }
 
 const NODE_WIDTH = 180;
-const NODE_HEIGHT = 90;
+const NODE_HEIGHT = 100;
 const NODE_GAP_X = 100;
 const NODE_GAP_Y = 140;
+const LEVEL_GAP = 200;
+const NODE_GAP = 240;
 const CANVAS_PADDING = 60;
 const VAR_BOX_WIDTH = 90;
 const VAR_BOX_HEIGHT = 40;
@@ -25,44 +27,168 @@ interface LayoutNode {
 
 type StructureType = 'Linked List' | 'Doubly Linked List' | 'Binary Tree' | 'Generic / Unknown';
 
+// ─── Normalize a heap node to extract left/right from properties ───────────
+function normalizeNode(n: HeapNode): HeapNode & { left: string | null; right: string | null; next: string | null } {
+    // Prefer top-level properties, fallback to parsing fields
+    const rawLeft = (n as any).left;
+    const rawRight = (n as any).right;
+    const rawNext = (n as any).next;
+
+    const left = (rawLeft && rawLeft !== 'null' && rawLeft !== 'NULL') ? String(rawLeft) : null;
+    const right = (rawRight && rawRight !== 'null' && rawRight !== 'NULL') ? String(rawRight) : null;
+    const next = (rawNext && rawNext !== 'null' && rawNext !== 'NULL') ? String(rawNext) : null;
+
+    return { ...n, left, right, next };
+}
+
+// ─── Detect what data structure the heap looks like ───────────────────────
 function detectStructure(heap: HeapNode[]): StructureType {
     if (heap.length === 0) return 'Generic / Unknown';
 
-    const hasLeftRight = heap.some(n => n.left !== null || n.right !== null || n.fields.some(f => f.key === 'left' || f.key === 'right'));
-    if (hasLeftRight) return 'Binary Tree';
+    // A struct is a TREE if ANY node has a NON-NULL left or right pointer.
+    // Just having the field key with value 'NULL' does NOT make it a tree.
+    const hasActiveTreePtr = heap.some(n => {
+        const norm = normalizeNode(n);
+        if (norm.left || norm.right) return true;
+        // Also check fields for non-NULL values
+        const fields = n.fields || [];
+        return fields.some(f =>
+            (f.key === 'left' || f.key === 'right') &&
+            f.value !== 'NULL' && f.value !== 'null' && f.value !== '' && f.value !== '0' && f.value !== '?'
+        );
+    });
+    if (hasActiveTreePtr) return 'Binary Tree';
 
-    const hasPrev = heap.some(n => n.fields.some(f => f.key === 'prev'));
-    const hasNext = heap.some(n => n.next !== null || n.fields.some(f => f.key === 'next'));
+    const hasNext = heap.some(n => normalizeNode(n).next !== null);
+    const hasPrev = heap.some(n => (n.fields || []).some(f => f.key === 'prev'));
 
     if (hasNext && hasPrev) return 'Doubly Linked List';
     if (hasNext) return 'Linked List';
-
     return 'Generic / Unknown';
 }
 
-function layoutNodes(heap: HeapNode[], stackOffset: number): { placed: LayoutNode[], type: StructureType } {
-    const placed: LayoutNode[] = [];
-    const visited = new Set<string>();
-    const pointedTo = new Set(heap.flatMap(n => [n.next, n.left, n.right].filter(Boolean) as string[]));
-    const roots = heap.filter(n => !pointedTo.has(n.id));
 
-    function place(node: HeapNode, row: number, depth: number) {
-        if (visited.has(node.id)) return;
-        visited.add(node.id);
-        const x = stackOffset + CANVAS_PADDING + depth * (NODE_WIDTH + NODE_GAP_X);
-        const y = CANVAS_PADDING + row * (NODE_HEIGHT + NODE_GAP_Y);
-        placed.push({ id: node.id, x, y, node });
-        if (node.next) { const c = heap.find(n => n.id === node.next); if (c) place(c, row, depth + 1); }
-        if (node.left) { const c = heap.find(n => n.id === node.left); if (c) place(c, row + 1, depth + 1); }
-        if (node.right) { const c = heap.find(n => n.id === node.right); if (c) place(c, row + 2, depth + 1); }
-    }
-
-    roots.forEach((root, i) => place(root, i, 0));
-    heap.forEach(n => { if (!visited.has(n.id)) place(n, placed.length, 0); });
-
-    return { placed, type: detectStructure(heap) };
+// ─── Calculate subtree depth ───────────────────────────────────────────────
+function getDepth(id: string | null, nodeMap: Map<string, HeapNode>, visited: Set<string> = new Set()): number {
+    if (!id || visited.has(id)) return 0;
+    const node = nodeMap.get(id);
+    if (!node) return 0;
+    visited.add(id);
+    const norm = normalizeNode(node);
+    return 1 + Math.max(
+        getDepth(norm.left, nodeMap, new Set(visited)),
+        getDepth(norm.right, nodeMap, new Set(visited))
+    );
 }
 
+// ─── Recursive geometric spread placement ─────────────────────────────────
+function placeTree(
+    nodeId: string,
+    depth: number,
+    centerX: number,
+    spread: number,
+    nodeMap: Map<string, HeapNode>,
+    placed: LayoutNode[],
+    visited: Set<string>
+): void {
+    if (!nodeId || visited.has(nodeId)) return;
+    const node = nodeMap.get(nodeId);
+    if (!node) return;
+
+    visited.add(nodeId);
+    placed.push({
+        id: nodeId,
+        x: Math.round(centerX - NODE_WIDTH / 2),
+        y: CANVAS_PADDING + depth * LEVEL_GAP,
+        node
+    });
+
+    const norm = normalizeNode(node);
+    const halfSpread = spread / 2;
+    if (norm.left) placeTree(norm.left, depth + 1, centerX - halfSpread, halfSpread, nodeMap, placed, visited);
+    if (norm.right) placeTree(norm.right, depth + 1, centerX + halfSpread, halfSpread, nodeMap, placed, visited);
+}
+
+// ─── Main layout function ──────────────────────────────────────────────────
+function layoutNodes(heap: HeapNode[], stackOffset: number): { placed: LayoutNode[], type: StructureType } {
+    const type = detectStructure(heap);
+    const placed: LayoutNode[] = [];
+    const visited = new Set<string>();
+
+    // Build a lookup map by id
+    const nodeMap = new Map<string, HeapNode>(heap.map(n => [n.id, n]));
+
+    if (type === 'Binary Tree') {
+        // Find all IDs that appear as left or right children
+        const childIds = new Set<string>();
+        heap.forEach(n => {
+            const norm = normalizeNode(n);
+            if (norm.left) childIds.add(norm.left);
+            if (norm.right) childIds.add(norm.right);
+        });
+
+        // Roots are nodes that are NOT children of anyone
+        let roots = heap.filter(n => !childIds.has(n.id));
+        if (roots.length === 0 && heap.length > 0) roots = [heap[0]];
+
+        let offsetX = stackOffset + CANVAS_PADDING;
+
+        roots.forEach(root => {
+            const d = getDepth(root.id, nodeMap);
+            const leafCount = Math.max(1, Math.pow(2, Math.max(0, d - 1)));
+            const treeWidth = Math.max(NODE_WIDTH + 60, leafCount * NODE_GAP);
+            const rootCenterX = offsetX + treeWidth / 2;
+
+            placeTree(root.id, 0, rootCenterX, treeWidth / 2, nodeMap, placed, visited);
+            offsetX += treeWidth + NODE_GAP;
+        });
+    } else {
+        // ── Linked List Layout: clean horizontal chain ──────────────────
+        // Find heads: nodes NOT pointed to by any other node's ->next
+        const nextTargets = new Set<string>();
+        heap.forEach(n => {
+            const norm = normalizeNode(n);
+            if (norm.next) nextTargets.add(norm.next);
+        });
+
+        const heads = heap.filter(n => !nextTargets.has(n.id));
+        if (heads.length === 0 && heap.length > 0) heads.push(heap[0]);
+
+        // Place each chain horizontally on its own row
+        const ROW_Y_GAP = NODE_HEIGHT + 80;
+        heads.forEach((head, row) => {
+            let current: HeapNode | undefined = head;
+            let col = 0;
+            while (current && !visited.has(current.id)) {
+                visited.add(current.id);
+                const x = stackOffset + CANVAS_PADDING + col * (NODE_WIDTH + NODE_GAP_X);
+                const y = CANVAS_PADDING + row * ROW_Y_GAP;
+                placed.push({ id: current.id, x, y, node: current });
+                col++;
+                const norm = normalizeNode(current);
+                current = norm.next ? nodeMap.get(norm.next) : undefined;
+            }
+        });
+    }
+
+    // Place any orphan nodes not yet placed
+    heap.forEach(n => {
+        if (!visited.has(n.id)) {
+            const row = placed.length;
+            placed.push({
+                id: n.id,
+                x: stackOffset + CANVAS_PADDING,
+                y: CANVAS_PADDING + row * (NODE_HEIGHT + NODE_GAP_Y),
+                node: n
+            });
+            visited.add(n.id);
+        }
+    });
+
+    return { placed, type };
+}
+
+// ─── Main Component ────────────────────────────────────────────────────────
 export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: GraphCanvasProps) {
     const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
     const [isDragging, setIsDragging] = useState(false);
@@ -97,62 +223,41 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
             maxY = Math.max(maxY, by + VAR_BOX_HEIGHT);
         });
 
-        if (minX === Infinity) {
-            setTransform({ x: 0, y: 0, scale: 1 });
-            return;
-        }
+        if (minX === Infinity) { setTransform({ x: 0, y: 0, scale: 1 }); return; }
 
         minX -= 50; maxX += 50; minY -= 50; maxY += 50;
-
         const cw = graphContainerRef.current.clientWidth;
         const ch = graphContainerRef.current.clientHeight;
-
         const scaleX = cw / (maxX - minX);
         const scaleY = ch / (maxY - minY);
         const newScale = Math.min(scaleX, scaleY, 1.2);
-
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
-
-        setTransform({
-            x: cw / 2 - cx * newScale,
-            y: ch / 2 - cy * newScale,
-            scale: newScale
-        });
+        setTransform({ x: cw / 2 - cx * newScale, y: ch / 2 - cy * newScale, scale: newScale });
     };
 
     useEffect(() => {
-        if (snapshot?.heap.length === 1 && prevSnapshotRef.current?.heap.length === 0) {
-            handleResetView();
-        }
-        // Also auto center on first ever load
-        if (snapshot && !prevSnapshotRef.current) {
-            handleResetView();
-        }
+        if (snapshot?.heap.length === 1 && prevSnapshotRef.current?.heap.length === 0) handleResetView();
+        if (snapshot && !prevSnapshotRef.current) handleResetView();
     }, [snapshot]);
 
     useEffect(() => {
         if (snapshot && prevSnapshotRef.current) {
             const newChanges = new Set<string>();
-
-            // Check stack pointers
             snapshot.stack.filter(s => s.isPointer).forEach(sv => {
                 const prev = prevSnapshotRef.current!.stack.find(p => p.name === sv.name);
                 if (prev && prev.pointsTo !== sv.pointsTo && sv.pointsTo !== null) {
                     newChanges.add(`stack-${sv.name}-${sv.pointsTo}`);
                 }
             });
-
-            // Check heap pointers (next, left, right)
             snapshot.heap.forEach(node => {
                 const prevNode = prevSnapshotRef.current!.heap.find(n => n.id === node.id);
                 if (prevNode) {
                     if (prevNode.next !== node.next && node.next) newChanges.add(`heap-${node.id}-next-${node.next}`);
-                    if (prevNode.left !== node.left && node.left) newChanges.add(`heap-${node.id}-left-${node.left}`);
-                    if (prevNode.right !== node.right && node.right) newChanges.add(`heap-${node.id}-right-${node.right}`);
+                    if ((prevNode as any).left !== (node as any).left && (node as any).left) newChanges.add(`heap-${node.id}-left-${(node as any).left}`);
+                    if ((prevNode as any).right !== (node as any).right && (node as any).right) newChanges.add(`heap-${node.id}-right-${(node as any).right}`);
                 }
             });
-
             if (newChanges.size > 0) {
                 setChangedPointers(newChanges);
                 const timer = setTimeout(() => setChangedPointers(new Set()), 500);
@@ -183,28 +288,23 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
         setDragStart({ x: e.clientX, y: e.clientY });
         e.currentTarget.setPointerCapture(e.pointerId);
     };
-
     const handlePointerMove = (e: React.PointerEvent) => {
         if (!isDragging) return;
-        const dx = e.clientX - dragStart.x;
-        const dy = e.clientY - dragStart.y;
-        setTransform(prev => ({ ...prev, x: prev.x + dx, y: prev.y + dy }));
+        setTransform(prev => ({ ...prev, x: prev.x + (e.clientX - dragStart.x), y: prev.y + (e.clientY - dragStart.y) }));
         setDragStart({ x: e.clientX, y: e.clientY });
     };
-
     const handlePointerUp = (e: React.PointerEvent) => {
         setIsDragging(false);
         e.currentTarget.releasePointerCapture(e.pointerId);
     };
-
     const handleWheel = (e: React.WheelEvent) => {
-        const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
-        setTransform(prev => ({ ...prev, scale: Math.max(0.1, Math.min(4, prev.scale * zoomDelta)) }));
+        const z = e.deltaY > 0 ? 0.9 : 1.1;
+        setTransform(prev => ({ ...prev, scale: Math.max(0.1, Math.min(4, prev.scale * z)) }));
     };
 
     return (
         <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-            <div style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(13, 27, 42, 0.8)', border: '1px solid #4fc3f7', color: '#4fc3f7', padding: '4px 8px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', zIndex: 100 }}>
+            <div style={{ position: 'absolute', top: 10, right: 10, background: 'rgba(13, 27, 42, 0.85)', border: '1px solid #4fc3f7', color: '#4fc3f7', padding: '4px 10px', borderRadius: '4px', fontSize: '11px', fontFamily: 'monospace', zIndex: 100 }}>
                 Structure: {structureType}
             </div>
             {hasLeak && (
@@ -236,6 +336,9 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                         <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                             <polygon points="0 0, 10 3.5, 0 7" fill="#ef5350" />
                         </marker>
+                        <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill="#66bb6a" />
+                        </marker>
                         <filter id="glow">
                             <feDropShadow dx="0" dy="0" stdDeviation="3" floodColor="#4fc3f7" floodOpacity="0.5" />
                         </filter>
@@ -245,20 +348,19 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                     </defs>
 
                     <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
-                        {/* Background Regions */}
+                        {/* Background lanes */}
                         <rect x={-5000} y={-5000} width={5000 + STACK_WIDTH} height={10000} fill="rgba(79, 195, 247, 0.02)" />
                         <rect x={STACK_WIDTH} y={-5000} width={10000} height={10000} fill="rgba(176, 190, 197, 0.02)" />
                         <line x1={STACK_WIDTH} y1={-5000} x2={STACK_WIDTH} y2={5000} stroke="#4fc3f7" strokeWidth="2" strokeDasharray="10,10" opacity="0.3" />
                         <text x={STACK_WIDTH / 2} y={20} textAnchor="middle" fill="#4fc3f7" opacity="0.5" fontSize="20" fontWeight="bold" fontFamily="monospace">STACK (Local Variables)</text>
                         <text x={STACK_WIDTH + 200} y={20} textAnchor="middle" fill="#b0bec5" opacity="0.5" fontSize="20" fontWeight="bold" fontFamily="monospace">HEAP (Dynamic Memory)</text>
 
-                        {/* Stack Variable Pointer Boxes */}
+                        {/* Stack pointer boxes */}
                         {ptrVars.map((sv, i) => {
                             const bx = CANVAS_PADDING - 20;
                             const by = CANVAS_PADDING + i * (VAR_BOX_HEIGHT + 50);
                             const targetLayout = layout.find(l => l.id === sv.pointsTo);
-                            const isActive = ['curr', 'temp', 'ptr'].includes(sv.name);
-
+                            const isActive = ['curr', 'temp', 'ptr', 'root', 'node'].includes(sv.name);
                             return (
                                 <g key={sv.name}>
                                     <rect x={bx} y={by} width={VAR_BOX_WIDTH} height={VAR_BOX_HEIGHT} rx="4"
@@ -299,7 +401,6 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                                             </g>
                                         );
                                     })()}
-
                                     {!targetLayout && sv.isDereferencingNull && (() => {
                                         const sx = bx + VAR_BOX_WIDTH;
                                         const sy = by + VAR_BOX_HEIGHT / 2;
@@ -317,22 +418,93 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                             );
                         })}
 
-                        {/* Heap Nodes */}
+                        {/* Tree / heap edges */}
                         {layout.map(({ id, x, y, node }) => {
-                            const ay = y;
+                            const arrows: ReactElement[] = [];
+                            const norm = normalizeNode(node);
+
+                            const renderArrow = (targetId: string, label: string, color: string, arrowId: string) => {
+                                const target = layout.find(l => l.id === targetId);
+                                if (target) {
+                                    const pointsToGhost = target.node.isFreed;
+                                    const stroke = pointsToGhost ? '#ef5350' : color;
+                                    const marker = pointsToGhost ? 'url(#arrow-red)' : `url(#${arrowId})`;
+
+                                    let sx: number, sy: number, ex: number, ey: number, pathD: string;
+
+                                    if (label === 'next') {
+                                        // Horizontal arrow: right side of source → left side of target
+                                        sx = x + NODE_WIDTH;
+                                        sy = y + NODE_HEIGHT / 2;
+                                        ex = target.x;
+                                        ey = target.y + NODE_HEIGHT / 2;
+                                        const midX = (sx + ex) / 2;
+                                        pathD = `M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ey}, ${ex} ${ey}`;
+                                    } else {
+                                        // Vertical arrow: bottom of source → top of target (tree)
+                                        sx = x + NODE_WIDTH / 2;
+                                        sy = y + NODE_HEIGHT;
+                                        ex = target.x + NODE_WIDTH / 2;
+                                        ey = target.y;
+                                        pathD = `M ${sx} ${sy} C ${sx} ${sy + 50}, ${ex} ${ey - 50}, ${ex} ${ey}`;
+                                    }
+
+                                    const midX = (sx + ex) / 2;
+                                    const midY = (sy + ey) / 2;
+
+                                    arrows.push(
+                                        <path key={`${id}-${label}`}
+                                            className={`animated-path ${changedPointers.has(`heap-${node.id}-${label}-${targetId}`) ? 'pointer-reassigned' : ''}`}
+                                            d={pathD}
+                                            fill="none" stroke={stroke} strokeWidth="2"
+                                            markerEnd={marker}
+                                        />
+                                    );
+                                    arrows.push(
+                                        <text key={`${id}-${label}-lbl`} x={midX} y={midY}
+                                            textAnchor="middle" fill={pointsToGhost ? '#ef5350' : '#78909c'}
+                                            fontSize="11" fontWeight="bold" fontFamily="monospace" dy="-6"
+                                        >{pointsToGhost ? '⚠ UAF' : label}</text>
+                                    );
+                                } else if (targetId) {
+                                    // NULL or dangling
+                                    const sx = label === 'left'
+                                        ? x + NODE_WIDTH * 0.3
+                                        : label === 'right'
+                                            ? x + NODE_WIDTH * 0.7
+                                            : x + NODE_WIDTH;
+                                    const sy = y + NODE_HEIGHT;
+                                    arrows.push(
+                                        <g key={`${id}-${label}-null`}>
+                                            <line x1={sx} y1={sy} x2={sx} y2={sy + 24} stroke="#37474f" strokeWidth="1.5" />
+                                            <text x={sx} y={sy + 36} textAnchor="middle" fill="#37474f" fontSize="10" fontFamily="monospace">NULL</text>
+                                        </g>
+                                    );
+                                }
+                            };
+
+                            if (norm.next) renderArrow(norm.next, 'next', '#4fc3f7', 'arrow-blue');
+                            if (norm.left) renderArrow(norm.left, 'left', '#66bb6a', 'arrow-green');
+                            if (norm.right) renderArrow(norm.right, 'right', '#4fc3f7', 'arrow-blue');
+
+                            return <g key={`arrows-${id}`}>{arrows}</g>;
+                        })}
+
+                        {/* Heap nodes */}
+                        {layout.map(({ id, x, y, node }) => {
                             const memAddr = `0x${(parseInt(id.replace('node_', '')) * 64 + 0x55a0).toString(16).toUpperCase()}`;
                             const isGhost = node.isFreed;
                             const isLeaked = node.isLeaked;
                             const isDoubleFree = node.isDoubleFree;
+                            const borderColor = isDoubleFree ? '#ff1744' : isGhost ? '#ef5350' : isLeaked ? '#ff9800' : '#4fc3f7';
+                            const fillColor = isDoubleFree ? 'rgba(58, 31, 31, 0.7)' : isGhost ? 'rgba(13, 27, 42, 0.4)' : isLeaked ? '#1f1700' : '#0d1b2a';
 
                             return (
-                                <g key={id} className={Array.from(changedPointers).some(p => p.endsWith(`-${id}`)) ? 'node-pulse' : ''}
+                                <g key={id}
+                                    className={Array.from(changedPointers).some(p => p.endsWith(`-${id}`)) ? 'node-pulse' : ''}
                                     onMouseEnter={(e) => {
                                         const svgBox = graphContainerRef.current?.getBoundingClientRect();
-                                        if (svgBox) {
-                                            setHoverNode(node);
-                                            setHoverPos({ x: e.clientX - svgBox.left, y: e.clientY - svgBox.top + 20 });
-                                        }
+                                        if (svgBox) { setHoverNode(node); setHoverPos({ x: e.clientX - svgBox.left, y: e.clientY - svgBox.top + 20 }); }
                                     }}
                                     onMouseMove={(e) => {
                                         if (hoverNode) {
@@ -342,43 +514,53 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                                     }}
                                     onMouseLeave={() => setHoverNode(null)}
                                 >
-                                    <rect x={x} y={ay} width={NODE_WIDTH} height={NODE_HEIGHT} rx="6"
-                                        fill={isDoubleFree ? "rgba(58, 31, 31, 0.6)" : (isGhost ? "rgba(13, 27, 42, 0.4)" : (isLeaked ? "#1f1700" : "#0d1b2a"))}
-                                        stroke={isDoubleFree ? "#ff1744" : (isGhost ? "#ef5350" : (isLeaked ? "#ff9800" : "#4fc3f7"))}
-                                        strokeWidth={isDoubleFree ? "3.5" : (isLeaked ? "2.5" : "1.5")}
-                                        strokeDasharray={isDoubleFree ? "6,4" : (isGhost ? "5,5" : (isLeaked ? "8,4" : "none"))}
-                                        filter={isDoubleFree ? "url(#glow-red)" : (isGhost ? "none" : (isLeaked ? "none" : "url(#glow)"))}
+                                    {/* Node shadow */}
+                                    <rect x={x + 4} y={y + 4} width={NODE_WIDTH} height={NODE_HEIGHT} rx="8" fill="rgba(0,0,0,0.4)" />
+                                    {/* Node box */}
+                                    <rect x={x} y={y} width={NODE_WIDTH} height={NODE_HEIGHT} rx="8"
+                                        fill={fillColor}
+                                        stroke={borderColor}
+                                        strokeWidth={isDoubleFree ? '3.5' : isLeaked ? '2.5' : '1.5'}
+                                        strokeDasharray={isDoubleFree ? '6,4' : isGhost ? '5,5' : isLeaked ? '8,4' : 'none'}
+                                        filter={isDoubleFree ? 'url(#glow-red)' : isGhost ? 'none' : isLeaked ? 'none' : 'url(#glow)'}
                                     />
+                                    {/* Status labels */}
                                     {isDoubleFree && (
-                                        <text x={x + NODE_WIDTH / 2} y={ay + NODE_HEIGHT / 2}
+                                        <text x={x + NODE_WIDTH / 2} y={y + NODE_HEIGHT / 2}
                                             textAnchor="middle" fill="#ff1744"
-                                            fontSize="18" fontWeight="bold" fontFamily="monospace"
-                                            transform={`rotate(-10 ${x + NODE_WIDTH / 2} ${ay + NODE_HEIGHT / 2})`}
+                                            fontSize="16" fontWeight="bold" fontFamily="monospace"
+                                            transform={`rotate(-10 ${x + NODE_WIDTH / 2} ${y + NODE_HEIGHT / 2})`}
                                             style={{ pointerEvents: 'none', userSelect: 'none' }}
                                         >⚠ DOUBLE FREE</text>
                                     )}
                                     {isGhost && !isDoubleFree && (
-                                        <text x={x + NODE_WIDTH / 2} y={ay + NODE_HEIGHT / 2}
+                                        <text x={x + NODE_WIDTH / 2} y={y + NODE_HEIGHT / 2}
                                             textAnchor="middle" fill="rgba(239, 83, 80, 0.4)"
-                                            fontSize="20" fontWeight="bold" fontFamily="monospace"
-                                            transform={`rotate(-15 ${x + NODE_WIDTH / 2} ${ay + NODE_HEIGHT / 2})`}
+                                            fontSize="18" fontWeight="bold" fontFamily="monospace"
+                                            transform={`rotate(-15 ${x + NODE_WIDTH / 2} ${y + NODE_HEIGHT / 2})`}
                                             style={{ pointerEvents: 'none', userSelect: 'none' }}
                                         >DEALLOCATED</text>
                                     )}
                                     {isLeaked && (
-                                        <text x={x + NODE_WIDTH / 2} y={ay - 10}
+                                        <text x={x + NODE_WIDTH / 2} y={y - 12}
                                             textAnchor="middle" fill="#ff9800"
-                                            fontSize="12" fontWeight="bold" fontFamily="monospace"
+                                            fontSize="11" fontWeight="bold" fontFamily="monospace"
                                         >⚠ MEMORY LEAK</text>
                                     )}
-                                    <text x={x + 10} y={ay + 14} fill={isGhost ? "#ef5350" : (isLeaked ? "#ffcc80" : "#546e7a")} fontSize="10" fontFamily="monospace">{memAddr}</text>
-                                    <line x1={x + 1} y1={ay + 20} x2={x + NODE_WIDTH - 1} y2={ay + 20} stroke={isGhost ? "rgba(239, 83, 80, 0.3)" : (isLeaked ? "rgba(255, 152, 0, 0.5)" : "#1c3a52")} strokeWidth="1" />
-                                    {node.fields.map((field, fi) => (
+                                    {/* Address */}
+                                    <text x={x + 10} y={y + 15} fill={isGhost ? '#ef5350' : isLeaked ? '#ffcc80' : '#546e7a'} fontSize="10" fontFamily="monospace">{memAddr}</text>
+                                    {/* Divider */}
+                                    <line x1={x + 1} y1={y + 22} x2={x + NODE_WIDTH - 1} y2={y + 22} stroke={isGhost ? 'rgba(239, 83, 80, 0.3)' : isLeaked ? 'rgba(255, 152, 0, 0.5)' : '#1c3a52'} strokeWidth="1" />
+                                    {/* Fields */}
+                                    {node.fields.slice(0, 4).map((field, fi) => (
                                         <g key={field.key}>
-                                            <text x={x + 12} y={ay + 34 + fi * 18} fill={isGhost ? "rgba(239, 83, 80, 0.6)" : (isLeaked ? "#ffb74d" : "#78909c")} fontSize="11" fontFamily="monospace">{field.key}:</text>
-                                            <text x={x + NODE_WIDTH - 12} y={ay + 34 + fi * 18}
+                                            <text x={x + 12} y={y + 36 + fi * 18}
+                                                fill={isGhost ? 'rgba(239, 83, 80, 0.6)' : isLeaked ? '#ffb74d' : '#78909c'}
+                                                fontSize="11" fontFamily="monospace"
+                                            >{field.key}:</text>
+                                            <text x={x + NODE_WIDTH - 12} y={y + 36 + fi * 18}
                                                 textAnchor="end"
-                                                fill={isGhost ? "rgba(239, 83, 80, 0.8)" : (['next', 'left', 'right'].includes(field.key) ? '#4fc3f7' : '#b0bec5')}
+                                                fill={isGhost ? 'rgba(239, 83, 80, 0.8)' : ['next', 'left', 'right'].includes(field.key) ? '#4fc3f7' : '#b0bec5'}
                                                 fontSize="11" fontFamily="monospace"
                                                 fontWeight={field.key === 'data' ? 'bold' : 'normal'}
                                             >{field.value}</text>
@@ -387,63 +569,18 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                                 </g>
                             );
                         })}
-
-                        {/* Pointer Arrows between heap nodes */}
-                        {layout.map(({ id, x, y, node }) => {
-                            const ay = y;
-                            const arrows: ReactElement[] = [];
-                            if (node.next) {
-                                const target = layout.find(l => l.id === node.next);
-                                if (target) {
-                                    const tay = target.y;
-                                    const sx = x + NODE_WIDTH, sy = ay + NODE_HEIGHT / 2;
-                                    const ex = target.x, ey = tay + NODE_HEIGHT / 2;
-                                    const mx = (sx + ex) / 2;
-                                    const pointsToGhost = target.node.isFreed;
-                                    arrows.push(
-                                        <path key={`${id}-next`}
-                                            className={`animated-path ${changedPointers.has(`heap-${node.id}-next-${node.next}`) ? 'pointer-reassigned' : ''}`}
-                                            d={`M ${sx} ${sy} C ${sx + 30} ${sy}, ${ex - 30} ${ey}, ${ex} ${ey}`}
-                                            fill="none" stroke={pointsToGhost ? '#ef5350' : '#4fc3f7'} strokeWidth="1.5"
-                                            strokeDasharray="6,3" markerEnd={pointsToGhost ? 'url(#arrow-red)' : 'url(#arrow-blue)'}
-                                        />
-                                    );
-                                    arrows.push(
-                                        <text key={`${id}-lbl`} x={mx} y={(sy + ey) / 2 - 10}
-                                            textAnchor="middle" fill={pointsToGhost ? '#ef5350' : '#37474f'} fontSize="10" fontWeight={pointsToGhost ? "bold" : "normal"} fontFamily="monospace">{pointsToGhost ? "⚠ USE AFTER FREE" : "next"}</text>
-                                    );
-                                } else {
-                                    const sx = x + NODE_WIDTH, sy = ay + NODE_HEIGHT / 2;
-                                    arrows.push(
-                                        <g key={`${id}-null`}>
-                                            <line x1={sx} y1={sy} x2={sx + 40} y2={sy} stroke="#444" strokeWidth="1.5" />
-                                            <text x={sx + 45} y={sy + 4} fill="#444" fontSize="11" fontFamily="monospace">NULL</text>
-                                        </g>
-                                    );
-                                }
-                            }
-                            return <g key={`arrows-${id}`}>{arrows}</g>;
-                        })}
                     </g>
                 </svg>
 
                 <button
                     onClick={handleResetView}
                     style={{
-                        position: 'absolute',
-                        bottom: '20px',
-                        right: '20px',
-                        padding: '8px 16px',
-                        background: '#1c3a52',
-                        border: '1px solid #4fc3f7',
-                        color: '#b0bec5',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        fontFamily: 'monospace',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
-                        transition: 'all 0.2s',
-                        zIndex: 10
+                        position: 'absolute', bottom: '20px', right: '20px',
+                        padding: '8px 16px', background: '#1c3a52',
+                        border: '1px solid #4fc3f7', color: '#b0bec5',
+                        borderRadius: '6px', cursor: 'pointer', fontSize: '12px',
+                        fontFamily: 'monospace', boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+                        transition: 'all 0.2s', zIndex: 10
                     }}
                 >
                     ⟳ Reset / Auto-Center
@@ -462,6 +599,6 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                     </div>
                 )}
             </div>
-        </div >
+        </div>
     );
 }

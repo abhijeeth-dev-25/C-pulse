@@ -33,7 +33,9 @@ export default function App() {
         line: msg.line,
         description: msg.description,
         heap: msg.heap || [],
-        stack: msg.stack || []
+        stack: msg.stack || [],
+        hasLeak: msg.hasLeak || false,
+        warnings: msg.warnings || []
       };
       setSnapshots(prev => {
         const next = [...prev, snap];

@@ -116,7 +116,12 @@ export class MessageHandler {
                 heapId: event.heapId,
                 varName: (event as any).varName || '',
                 addr: (event as any).addr || 0,
-                fields: [{ key: 'data', value: '?' }, { key: 'next', value: 'NULL' }],
+                fields: [
+                    { key: 'data', value: '?' },
+                    { key: 'next', value: 'NULL' },
+                    { key: 'left', value: 'NULL' },
+                    { key: 'right', value: 'NULL' }
+                ],
                 next: null,
                 left: null,
                 right: null,

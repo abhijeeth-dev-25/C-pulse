@@ -106,7 +106,7 @@ export class CTraceEngine {
 
         // ── FIELD ASSIGNMENT: newNode->data = val ──
         const fieldAssignMatch = line.match(/(\w+)\s*->\s*(\w+)\s*=\s*([^;]+)/);
-        if (fieldAssignMatch && !line.includes("->next")) {
+        if (fieldAssignMatch && !line.includes("->next") && !line.includes("->left") && !line.includes("->right")) {
             const varName = fieldAssignMatch[1];
             const field = fieldAssignMatch[2];
             let value = fieldAssignMatch[3].trim().replace(/['"]/g, "");
@@ -128,29 +128,31 @@ export class CTraceEngine {
             return;
         }
 
-        // ── POINTER LINK: x->next = y ──
-        const nextAssignMatch = line.match(/(\w+)\s*->\s*next\s*=\s*(\w+)/);
-        if (nextAssignMatch) {
-            const srcVar = nextAssignMatch[1];
-            const dstVar = nextAssignMatch[2];
+        // ── POINTER LINK: x->next/left/right = y ──
+        const ptrFieldMatch = line.match(/(\w+)\s*->\s*(next|left|right)\s*=\s*(\w+)/);
+        if (ptrFieldMatch) {
+            const srcVar = ptrFieldMatch[1];
+            const field = ptrFieldMatch[2] as 'next' | 'left' | 'right';
+            const dstVar = ptrFieldMatch[3];
 
             const srcSV = this.stack.get(srcVar);
             if (srcSV?.pointsTo) {
                 const srcNode = this.heap.get(srcSV.pointsTo);
                 if (srcNode) {
                     if (dstVar === "NULL" || dstVar === "null") {
-                        srcNode.next = null;
-                        srcNode.fields = srcNode.fields.filter((f) => f.key !== "next");
-                        srcNode.fields.push({ key: "next", value: "NULL" });
+                        srcNode[field] = null;
+                        srcNode.fields = srcNode.fields.filter((f) => f.key !== field);
+                        srcNode.fields.push({ key: field, value: "NULL" });
                     } else {
+                        // Could be a variable OR a function call like newNode(...)
                         const dstSV = this.stack.get(dstVar);
                         if (dstSV?.pointsTo) {
-                            srcNode.next = dstSV.pointsTo;
-                            srcNode.fields = srcNode.fields.filter((f) => f.key !== "next");
-                            srcNode.fields.push({ key: "next", value: `[Ref]` });
+                            srcNode[field] = dstSV.pointsTo;
+                            srcNode.fields = srcNode.fields.filter((f) => f.key !== field);
+                            srcNode.fields.push({ key: field, value: `[Ref]` });
                         }
                     }
-                    this.captureSnapshot(lineNum, `${srcVar}->next = ${dstVar}`);
+                    this.captureSnapshot(lineNum, `${srcVar}->${field} = ${dstVar}`);
                 }
             }
             return;

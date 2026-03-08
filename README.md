@@ -10,18 +10,27 @@
 
 ---
 
+## 📸 Demo
+
+<video src="https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/linkedlist.mov" autoplay loop muted controls style="max-width: 100%;">
+  <a href="https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/linkedlist.mov">Watch the Demo Video</a>
+</video>
+*(A live preview of C-Pulse visually tracing linked list manipulation memory addresses dynamically.)*
+
+---
+
 ## 🚀 Screenshots
 
-![Workspace Interface Overview](images/screenshot_1.png)  
+![Workspace Interface Overview](https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/screenshot_1.png)  
 *(The main UI features synchronized code execution, stack/heap boundaries, and real-time inspector layers.)*
 
-![Execution Timeline](images/screenshot_2.png)  
+![Execution Timeline](https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/screenshot_2.png)  
 *(Interactive timeline scrubbing and memory visualizations.)*
 
-![Graph Structure](images/screenshot_3.png)  
+![Graph Structure](https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/screenshot_3.png)  
 *(Visualizing complex pointer relationships and heap allocations.)*
 
-![Advanced View](images/screenshot_4.png)  
+![Advanced View](https://raw.githubusercontent.com/abhijeeth-dev-25/C-pulse/main/images/screenshot_4.png)  
 *(Deep inspection of pointers, addresses, and data structures.)*
 
 ---

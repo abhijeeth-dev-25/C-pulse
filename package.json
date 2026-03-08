@@ -55,7 +55,7 @@
     "build:webview": "cd webview-ui && npm run build",
     "build": "npm run build:extension && npm run build:webview",
     "package": "npm run build",
-    "clean": "rm -rf dist out webview-ui/dist",
+    "clean": "rm -rf dist out",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "npm run compile-tests && npm run compile && npm run lint",

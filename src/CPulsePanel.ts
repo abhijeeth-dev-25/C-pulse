@@ -27,7 +27,7 @@ export class CPulsePanel {
                 ViewColumn.Beside,
                 {
                     enableScripts: true,
-                    localResourceRoots: [Uri.joinPath(extensionUri, "out")],
+                    localResourceRoots: [Uri.joinPath(extensionUri, "dist")],
                     retainContextWhenHidden: true,
                 }
             );
@@ -66,11 +66,11 @@ export class CPulsePanel {
      * This enables live reloading of the React UI without restarting the extension.
      */
     private _watchWebviewBuild(extensionUri: Uri) {
-        const jsOutPath = Uri.joinPath(extensionUri, "out", "webview", "assets", "index.js").fsPath;
+        const jsOutPath = Uri.joinPath(extensionUri, "dist", "webview", "assets", "index.js").fsPath;
 
         // Use VS Code's built-in file watcher
         const watcher = workspace.createFileSystemWatcher(
-            `**${path.sep}out${path.sep}webview${path.sep}assets${path.sep}*.js`
+            `**${path.sep}dist${path.sep}webview${path.sep}assets${path.sep}*.js`
         );
 
         const reload = () => {
@@ -106,11 +106,11 @@ export class CPulsePanel {
     private _getWebviewContent(webview: Webview) {
         // The CSS file from the React build output
         const stylesUri = webview.asWebviewUri(
-            Uri.joinPath(this._extensionUri, "out", "webview", "assets", "index.css")
+            Uri.joinPath(this._extensionUri, "dist", "webview", "assets", "index.css")
         );
         // The JS file from the React build output
         const scriptUri = webview.asWebviewUri(
-            Uri.joinPath(this._extensionUri, "out", "webview", "assets", "index.js")
+            Uri.joinPath(this._extensionUri, "dist", "webview", "assets", "index.js")
         );
 
         const nonce = getNonce();

@@ -154,36 +154,45 @@ function layoutNodes(heap: HeapNode[], stackOffset: number): { placed: LayoutNod
         const heads = heap.filter(n => !nextTargets.has(n.id));
         if (heads.length === 0 && heap.length > 0) heads.push(heap[0]);
 
-        // Place each chain horizontally on its own row
-        const ROW_Y_GAP = NODE_HEIGHT + 80;
-        heads.forEach((head, row) => {
+        const ROW_Y_GAP = NODE_HEIGHT + 100;
+        let currentRow = 0;
+
+        // Place each chain horizontally on its own consecutive row
+        heads.forEach(head => {
             let current: HeapNode | undefined = head;
             let col = 0;
+            let placedInThisRow = false;
+
             while (current && !visited.has(current.id)) {
                 visited.add(current.id);
                 const x = stackOffset + CANVAS_PADDING + col * (NODE_WIDTH + NODE_GAP_X);
-                const y = CANVAS_PADDING + row * ROW_Y_GAP;
+                const y = CANVAS_PADDING + currentRow * ROW_Y_GAP;
                 placed.push({ id: current.id, x, y, node: current });
+                placedInThisRow = true;
                 col++;
                 const norm = normalizeNode(current);
                 current = norm.next ? nodeMap.get(norm.next) : undefined;
             }
+            if (placedInThisRow) currentRow++;
+        });
+
+        // Place any remaining orphan nodes (cycles or isolated nodes)
+        heap.forEach(n => {
+            if (!visited.has(n.id)) {
+                placed.push({
+                    id: n.id,
+                    x: stackOffset + CANVAS_PADDING,
+                    y: CANVAS_PADDING + currentRow * ROW_Y_GAP,
+                    node: n
+                });
+                visited.add(n.id);
+                currentRow++;
+            }
         });
     }
 
-    // Place any orphan nodes not yet placed
-    heap.forEach(n => {
-        if (!visited.has(n.id)) {
-            const row = placed.length;
-            placed.push({
-                id: n.id,
-                x: stackOffset + CANVAS_PADDING,
-                y: CANVAS_PADDING + row * (NODE_HEIGHT + NODE_GAP_Y),
-                node: n
-            });
-            visited.add(n.id);
-        }
-    });
+    // Sort to ensure consistent rendering order
+    placed.sort((a, b) => a.id.localeCompare(b.id));
 
     return { placed, type };
 }
@@ -438,8 +447,17 @@ export function GraphCanvas({ snapshot, snapshots = [], currentIndex = -1 }: Gra
                                         sy = y + NODE_HEIGHT / 2;
                                         ex = target.x;
                                         ey = target.y + NODE_HEIGHT / 2;
-                                        const midX = (sx + ex) / 2;
-                                        pathD = `M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ey}, ${ex} ${ey}`;
+
+                                        if (ey === sy && ex > sx) {
+                                            // Same row, moving forward: straight line is fine, or slight curve
+                                            const midX = (sx + ex) / 2;
+                                            pathD = `M ${sx} ${sy} C ${midX} ${sy}, ${midX} ${ey}, ${ex} ${ey}`;
+                                        } else {
+                                            // Different row, or jumping backwards: curve out and down/up
+                                            const diffX = Math.abs(ex - sx);
+                                            const controlOffset = Math.max(80, diffX * 0.4);
+                                            pathD = `M ${sx} ${sy} C ${sx + controlOffset} ${sy}, ${ex - controlOffset} ${ey}, ${ex} ${ey}`;
+                                        }
                                     } else {
                                         // Vertical arrow: bottom of source → top of target (tree)
                                         sx = x + NODE_WIDTH / 2;
